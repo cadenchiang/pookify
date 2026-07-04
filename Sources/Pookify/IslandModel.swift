@@ -13,6 +13,22 @@ final class IslandModel: ObservableObject {
     /// Small context under the label, e.g. the file basename ("App.swift"). Empty when none.
     @Published var detail: String = ""
     @Published var startedAt: Double = 0
+
+    /// Every live session, most urgent first. The scalar fields above always describe the one
+    /// session the closed bar shows (`displayedId`); with 2+ sessions the expanded drop-down
+    /// renders this list instead of the single-session layout.
+    @Published var sessions: [SessionInfo] = []
+    /// Which session the closed bar is showing (highlighted in the stack).
+    @Published var displayedId: String = ""
+    /// Non-nil while the user has pinned a session (clicked a row); shown in the context menu.
+    @Published var pinnedId: String? = nil
+
+    /// The expanded drop-down is the session stack rather than the single-session layout.
+    var isMulti: Bool { sessions.count >= 2 }
+
+    /// Current height of the expanded drop-down (the stack grows with the session count).
+    /// The window's interactive zone is sized from this, so it must cover the tallest case.
+    var dropHeight: CGFloat { isMulti ? Theme.stackDropHeight(sessions.count) : Theme.dropHeight }
     /// Auto-open on an important change (e.g. a permission request).
     @Published var forceExpand = false
     /// The user clicked the island to pin it open (iPhone-style tap to expand / tap to close).
@@ -51,6 +67,8 @@ final class IslandModel: ObservableObject {
 
     /// Left-click on the island (toggles expand/collapse).
     var onActivate: (() -> Void)?
+    /// Click on a session row: pin that session to the island (click again to unpin).
+    var onSelectSession: (String) -> Void = { _ in }
 
     // Context-menu (right-click) wiring, provided by the app controller.
     var onQuit: () -> Void = {}

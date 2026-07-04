@@ -48,6 +48,7 @@ final class AppController: NSObject, NSApplicationDelegate {
         }
 
         model.onActivate = { [weak self] in self?.toggleExpanded() }
+        model.onSelectSession = { [weak self] id in self?.selectSession(id) }
         model.onQuit = { [weak self] in self?.quit() }
         model.onChooseClaudeStyle = { [weak self] style in self?.chooseClaudeStyle(style) }
         windowController.install()
@@ -93,9 +94,34 @@ final class AppController: NSObject, NSApplicationDelegate {
     private var hidePending = false
     private var hideWork: DispatchWorkItem?
     private var openingWork: DispatchWorkItem?
+    private var lastDecision: IslandDecision?
+
+    /// The one session the closed bar shows. Auto by default (most urgent first — the list is
+    /// already sorted); a user pin overrides auto, but a permission request anywhere ALWAYS wins:
+    /// the island must never mask a session that is blocked on the user.
+    private func displayedSession(_ d: IslandDecision) -> SessionInfo? {
+        guard let top = d.sessions.first else { return nil }
+        if top.state == .permission { return top }
+        if let pin = model.pinnedId, let s = d.sessions.first(where: { $0.id == pin }) { return s }
+        return top
+    }
+
+    /// A click on a session row: pin it to the island (clicking the pinned row unpins → auto).
+    /// Applies immediately so the highlight and closed bar respond to the click, not the next poll.
+    private func selectSession(_ id: String) {
+        model.pinnedId = (model.pinnedId == id) ? nil : id
+        if let d = lastDecision { apply(d) }
+    }
 
     private func apply(_ d: IslandDecision) {
+        lastDecision = d
         let wasVisible = model.isVisible
+
+        // A pin only means something while its session is live; drop it once the session is gone
+        // (ended, reaped, or resting) so the island falls back to following urgency.
+        if let pin = model.pinnedId, !d.sessions.contains(where: { $0.id == pin }) {
+            model.pinnedId = nil
+        }
 
         if d.visible {
             hidePending = false
@@ -117,11 +143,21 @@ final class AppController: NSObject, NSApplicationDelegate {
                 openingWork = work
                 DispatchQueue.main.asyncAfter(deadline: .now() + 1.15, execute: work)
             }
-            if model.provider != d.provider { model.provider = d.provider }
-            if model.state != d.state { model.state = d.state }
-            if model.label != d.label { model.label = d.label }
-            if model.detail != d.detail { model.detail = d.detail }
-            if model.startedAt != d.startedAt { model.startedAt = d.startedAt }
+            // The scalar fields describe the DISPLAYED session (pin/permission-aware); the list
+            // feeds the expanded stack. The window's interactive zone depends on the session
+            // count (the stack is taller), so refresh it when the count moves.
+            let shown = displayedSession(d)!   // d.visible ⇒ sessions is non-empty
+            if model.sessions != d.sessions {
+                let countChanged = model.sessions.count != d.sessions.count
+                model.sessions = d.sessions
+                if countChanged { windowController.refreshInteractivity() }
+            }
+            if model.displayedId != shown.id { model.displayedId = shown.id }
+            if model.provider != shown.provider { model.provider = shown.provider }
+            if model.state != shown.state { model.state = shown.state }
+            if model.label != shown.label { model.label = shown.label }
+            if model.detail != shown.detail { model.detail = shown.detail }
+            if model.startedAt != shown.startedAt { model.startedAt = shown.startedAt }
             // A permission request auto-opens the island ONCE (rising edge) and auto-collapses when it
             // clears (falling edge). In between the user can freely collapse it — forceExpand no longer
             // pins it open.

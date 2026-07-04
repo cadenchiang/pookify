@@ -2,6 +2,8 @@
 
 <img src="docs/demo.gif" alt="Pookify — the Claude Code dynamic island, live on the MacBook notch" width="760">
 
+<img src="docs/multi-sessions.gif" alt="Multiple Claude Code sessions — the closed bar shows a session count, and hovering opens the session stack" width="760">
+
 # Pookify 🐼
 
 The Claude Code dynamic Island for your MacBook.
@@ -37,10 +39,21 @@ Right-click the island to switch between **Clawd** (the crab, default) and the *
 <img src="docs/change-icon.gif" alt="Switching the Claude icon from the island's right-click menu" width="640">
 
 
+## Multiple sessions
+
+Run as many Claude Code sessions as you like — the closed island always reflects what most
+deserves your attention: a quiet count badge while several sessions work, the amber dot the moment
+any of them awaits permission (a blocked session always wins; ties go to the newest turn). Hover or click to expand: with two or more sessions the drop-down becomes the
+**session stack** — one row per session with its project, current activity, and live timer, most
+urgent first. Click a row to pin that session to the island; click it again to follow urgency again.
+Up to three rows show at once — beyond that the stack scrolls, the next row fading into the black as
+the hint. With a single session, nothing changes at all.
+
 ## Where it works
 
 - ✅ Claude Code in the terminal
 - ✅ Claude Code in the VS Code extension
+- ✅ Several sessions at once, across both
 
 ## Update
 
@@ -62,7 +75,7 @@ Removes the app and its hooks. Your config backup (`settings.json.bak-pookify`) 
 
 ## How it works
 
-Claude Code runs a hook each time something happens (a tool starts, a tool finishes, a turn ends, a prompt needs approval). A small compiled helper, `island-hook`, writes that session's status to a JSON file under `~/Library/Application Support/Pookify/state.d/`. The app checks that folder a few times a second, folds every live session into one decision, and draws the notch.
+Claude Code runs a hook each time something happens (a tool starts, a tool finishes, a turn ends, a prompt needs approval). A small compiled helper, `island-hook`, writes that session's status to a JSON file under `~/Library/Application Support/Pookify/state.d/` — one file per session. The app checks that folder a few times a second, sorts the live sessions by urgency, and draws the notch: the most urgent session on the closed bar, all of them in the expanded stack.
 
 The installer adds its hooks to `~/.claude/settings.json`, backs the file up first, and leaves your other hooks and settings alone.
 

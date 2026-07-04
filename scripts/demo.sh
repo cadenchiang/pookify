@@ -9,7 +9,10 @@
 #   ./scripts/demo.sh <activity>              Claude doing <activity>
 #   ./scripts/demo.sh story1|story2|story3|story4   play a timed story (for recording)
 #   ./scripts/demo.sh stories                 list the stories + what each shows
-#   ./scripts/demo.sh multi                   two live sessions → permission outranks working
+#   ./scripts/demo.sh multi [n]               n live sessions (2-30) → the session stack; a
+#                                             permission outranks working; 4+ scrolls
+#   ./scripts/demo.sh record [n] [hold]       recordable clip: 5s countdown → n sessions appear
+#                                             (nothing auto-expands) → hold → retract
 #   ./scripts/demo.sh open|close|blink|finish play the open/close animations
 #   ./scripts/demo.sh closes                  play open → close five times, then stop
 #   ./scripts/demo.sh cycle                   auto-play through everything
@@ -286,17 +289,121 @@ case "$cmd" in
     done ;;
 
   multi)
-    # Two live sessions at once → the island folds them into one and shows the higher-priority
-    # state: the permission request outranks the merely-working session.
+    # N live sessions at once (2-30, default 2) → the closed bar shows the most urgent one (a
+    # permission request outranks the merely-working); expanding reveals the session stack —
+    # one row per session, blocked first. 4+ sessions make the stack scroll (3 rows + a fogged
+    # half-row peek). Sessions beyond the six named ones are generated with varied projects,
+    # activities and turn ages; #14 is a second permission, buried deep, so you can watch
+    # blocked sessions float to the top of the stack no matter when they arrived.
+    n="${2:-2}"
+    case "$n" in *[!0-9]*|'') echo "usage: ./scripts/demo.sh multi [2-30]"; exit 1 ;; esac
+    [ "$n" -lt 2 ] && n=2
+    [ "$n" -gt 30 ] && n=30
     lp="$(live_pid)"; now="$(date +%s)"; rm -f "$SD"/*.json 2>/dev/null
     if [ -n "${STYLE:-}${SHADE:-}${EXPAND:-}" ]; then pkill -x Pookify 2>/dev/null; sleep 0.25; fi
-    printf '{"schema":1,"provider":"claude","sessionId":"multiA","state":"tool","label":"Editing","tool":"Edit","project":"alpha","cwd":"%s","model":"claude-opus-4-8","pid":%s,"startedAt":%s,"ts":%s,"started":true}' \
-      "$(json_escape "$REPO")" "$lp" "$((now-30))" "$now" > "$SD/claude-multiA.json"
-    printf '{"schema":1,"provider":"claude","sessionId":"multiB","state":"permission","label":"Awaiting permission","tool":"Bash","project":"beta","cwd":"%s","model":"claude-opus-4-8","pid":%s,"startedAt":0,"ts":%s,"started":true}' \
-      "$(json_escape "$REPO")" "$lp" "$now" > "$SD/claude-multiB.json"
+    # id|project|state|label|tool|startedSecondsAgo|detail  — moon-lander's permission keeps its turn
+    # clock running (startedAt > 0), exactly like a real blocked turn.
+    specs=(
+      "multiA|pixel-forge|tool|Editing|Edit|45|sidebar.tsx"
+      "multiB|moon-lander|permission|Awaiting permission|Bash|130|"
+      "multiC|coffee-tracker|tool|Running command|Bash|750|deploy.sh"
+      "multiD|dream-journal|thinking|Thinking…||8|"
+      "multiE|recipe-rocket|tool|Searching web|WebSearch|18|"
+      "multiF|synthwave-fm|tool|Reading|Read|65|README.md"
+    )
+    extra_names=(tiny-rpg plant-daddy budget-ninja meme-factory star-charts lo-fi-player
+                 sourdough-lab chess-coach habit-hero robo-vacuum cat-cam wordle-solver
+                 retro-arcade taco-finder night-sky paper-plane code-golf pixel-pet
+                 rain-sounds road-trip zine-maker garden-gnome drone-pilot portfolio-v9)
+    i=0
+    while [ "$i" -lt "$n" ]; do
+      if [ "$i" -lt "${#specs[@]}" ]; then
+        IFS='|' read -r id proj st label tool ago detail <<< "${specs[$i]}"
+      else
+        j=$((i - ${#specs[@]}))
+        id="multi$i"; proj="${extra_names[$((j % ${#extra_names[@]}))]}"
+        if [ "$j" -eq 7 ]; then
+          st=permission; label="Awaiting permission"; tool=Bash; detail=""
+        else
+          case $((j % 4)) in
+            0) st=tool; label="Editing"; tool=Edit; detail="main.swift" ;;
+            1) st=tool; label="Running command"; tool=Bash; detail="" ;;
+            2) st=thinking; label="Thinking…"; tool=""; detail="" ;;
+            3) st=tool; label="Reading"; tool=Read; detail="README.md" ;;
+          esac
+        fi
+        ago=$((25 + (j * 37) % 1100))
+      fi
+      printf '{"schema":1,"provider":"claude","sessionId":"%s","state":"%s","label":"%s","tool":"%s","project":"%s","cwd":"%s","model":"claude-opus-4-8","pid":%s,"startedAt":%s,"ts":%s,"started":true,"detail":"%s"}' \
+        "$id" "$st" "$label" "$tool" "$proj" "$(json_escape "$REPO")" "$lp" "$((now-ago))" "$now" "$detail" \
+        > "$SD/claude-$id.json"
+      i=$((i+1))
+    done
     ensure_app
-    echo "▸ Two live sessions: one Editing + one Awaiting permission."
-    echo "  → The island shows the permission (amber, auto-opens) — permission outranks working." ;;
+    echo "▸ $n live sessions."
+    echo "  → Closed: the bar shows the most urgent session (moon-lander's amber permission), unchanged look."
+    echo "  → Hover/click: the session stack — blocked first, then the newest turns; click a row to pin."
+    [ "$n" -ge 4 ] && echo "  → With $n sessions the stack scrolls — the fourth row fogs into the black as the hint."
+    echo "  next: ./scripts/demo.sh multi 4   |   back to one: ./scripts/demo.sh editing   |   stop: ./scripts/demo.sh stop" ;;
+
+  record)
+    # A recordable clip, all default behavior: 5s countdown (arrange your screen recorder) →
+    # N working sessions appear at once (island emerges slim; NOTHING auto-expands — no
+    # permission session in this set) → holds for a few seconds (hover yourself to show the
+    # stack if you like) → sessions clear and the island retracts into the notch.
+    #   record [sessions] [holdSecs]     defaults: 10 sessions, 5s hold
+    n="${2:-10}"; hold="${3:-5}"
+    case "$n" in *[!0-9]*|'') echo "usage: ./scripts/demo.sh record [sessions] [holdSecs]"; exit 1 ;; esac
+    case "$hold" in *[!0-9]*|'') echo "usage: ./scripts/demo.sh record [sessions] [holdSecs]"; exit 1 ;; esac
+    [ "$n" -lt 2 ] && n=2
+    [ "$n" -gt 24 ] && n=24
+    lp="$(live_pid)"; rm -f "$SD"/*.json 2>/dev/null
+    # A hand-picked cast (project|state|label|tool|turnSecondsAgo|detail): repos that read like
+    # a real product company — a SaaS landing page in .tsx, an iOS app in SwiftUI, an API
+    # deploying, docs, dashboards — and never a permission (nothing may auto-open on camera).
+    rec_specs=(
+      "saas-landing|tool|Editing|Edit|47|Hero.tsx"
+      "ios-app|tool|Editing|Edit|132|Paywall.swift"
+      "pricing-page|thinking|Thinking…||9|"
+      "api-server|tool|Running command|Bash|754|"
+      "dashboard|tool|Reading|Read|23|Chart.tsx"
+      "checkout|tool|Searching web|WebSearch|65|"
+      "marketing-site|tool|Writing|Write|38|globals.css"
+      "mobile-app|tool|Editing|Edit|210|Onboarding.swift"
+      "docs-site|tool|Reading|Read|17|quickstart.md"
+      "billing-service|tool|Running command|Bash|92|"
+      "admin-panel|tool|Editing|Edit|306|UsersTable.tsx"
+      "auth-service|tool|Planning|TodoWrite|12|"
+      "blog|tool|Editing|Edit|58|post-editor.tsx"
+      "analytics|thinking|Thinking…||81|"
+      "widget-kit|tool|Writing|Write|26|StatsWidget.swift"
+      "search-service|tool|Searching|Grep|44|"
+      "design-system|tool|Reading|Read|173|Button.tsx"
+      "landing-v2|tool|Editing|Edit|15|Pricing.tsx"
+      "support-bot|thinking|Thinking…||247|"
+      "cli-tool|tool|Running command|Bash|530|"
+      "onboarding-flow|tool|Editing|Edit|69|StepTwo.swift"
+      "status-page|tool|Reading|Read|33|uptime.ts"
+      "ios-widgets|tool|Writing|Write|121|Timeline.swift"
+      "email-templates|tool|Searching web|WebSearch|29|"
+    )
+    echo "▸ recording clip: $n sessions, ${hold}s hold, then retract."
+    echo -n "  starting in 5"; sleep 1
+    for c in 4 3 2 1; do echo -n " … $c"; sleep 1; done; echo " … go"
+    now="$(date +%s)"
+    i=0
+    for spec in "${rec_specs[@]}"; do
+      [ "$i" -ge "$n" ] && break
+      IFS='|' read -r proj st label tool ago detail <<< "$spec"
+      printf '{"schema":1,"provider":"claude","sessionId":"rec%s","state":"%s","label":"%s","tool":"%s","project":"%s","cwd":"%s","model":"claude-opus-4-8","pid":%s,"startedAt":%s,"ts":%s,"started":true,"detail":"%s"}' \
+        "$i" "$st" "$label" "$tool" "$proj" "$(json_escape "$REPO")" "$lp" "$((now-ago))" "$now" "$detail" \
+        > "$SD/claude-rec$i.json"
+      i=$((i+1))
+    done
+    ensure_app
+    sleep "$hold"
+    rm -f "$SD"/claude-rec*.json
+    echo "  ✓ clip done — the island is retracting. Replay: ./scripts/demo.sh record $n $hold" ;;
 
   help|-h|--help)
     awk 'NR>1 && /^#/ {sub(/^# ?/,""); print; next} NR>1 {exit}' "$0" ;;

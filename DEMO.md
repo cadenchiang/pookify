@@ -95,19 +95,31 @@ EXPAND=1 ./scripts/demo.sh planning
 
 ---
 
-## Multiple sessions (folding + priority)
+## Multiple sessions (the session stack)
 
-Real life runs more than one session at once. Pookify folds **every live session into one island**
-and surfaces the highest-priority one: **awaiting permission > working (thinking/tool) > done/error
-> idle**; ties break toward the most recently updated session.
+Real life runs more than one session at once. The **closed bar** stays exactly the single-session
+bar and shows the most urgent session: **awaiting permission > working (thinking/tool) > done/error
+> idle**; ties break toward the newest turn. **Expanding** the island (hover/click) with 2+ live
+sessions replaces the single-session drop-down with the **session stack** — one row per session
+(state dot · project · activity · live timer), most urgent first.
 
 ```bash
-./scripts/demo.sh multi      # one session Editing + one Awaiting permission, live at the same time
+./scripts/demo.sh multi      # 2 sessions: one Editing + one Awaiting permission
+./scripts/demo.sh multi 4    # 4 sessions → the stack scrolls
+./scripts/demo.sh multi 6    # the works (2–6 supported)
 ```
 
-You should see the **amber** "Awaiting permission" pill (auto-opened) — the *Editing* session is
-live too, but permission outranks working. (The island shows one session at a time by design;
-there's no on-screen session counter.) `stop` to clear.
+With `multi`, you should see the **amber** "Awaiting permission" bar (auto-opened) — the *Editing*
+session is live too, but permission outranks working. Hover to see both as rows. **Click a row** to
+pin that session to the closed bar (click it again — or right-click → *Unpin* — to go back to
+following urgency; a permission request elsewhere always takes the island regardless of the pin).
+
+At most **three rows** are visible; with more sessions the stack scrolls: the next row peeks out
+and dissolves into a **deep fog at the bottom edge** — that fade is the scroll hint. It lifts when
+you reach the bottom, and mirrors at the top when rows sit above. With 14+ sessions there's a second permission session ("chess-coach") buried deep in
+the write order — it still sits at the top, because blocked sessions always sort first. With a
+single session, nothing anywhere changes — the island is exactly the classic design. `stop` to
+clear.
 
 ---
 

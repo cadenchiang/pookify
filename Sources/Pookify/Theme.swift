@@ -32,6 +32,24 @@ enum Theme {
     static let wing: CGFloat = 56        // each side wing (glyph / timer) of the closed bar
     static let dropHeight: CGFloat = 54  // how much taller the expanded drop-down adds
 
+    // ── Multi-session (the Stack) ─────────────────────────────────────────────
+    // With 2+ live sessions the expanded drop-down becomes a session list instead of the
+    // single-session layout. These knobs size it; with one session nothing here applies.
+    static let sessionRowHeight: CGFloat = 28   // one session row in the expanded stack
+    static let sessionRowSpacing: CGFloat = 2
+    static let sessionRowsVisible = 3           // full rows shown at most; more sessions scroll
+    /// Expanded drop-down height for `count` sessions (single session uses `dropHeight`).
+    /// Past `sessionRowsVisible` the list scrolls: two thirds of the next row peek out and
+    /// dissolve into a deep fog at the bottom edge — that fade is the whole scroll hint.
+    /// Nothing is ever dropped.
+    static func stackDropHeight(_ count: Int) -> CGFloat {
+        let full = CGFloat(min(max(count, 1), sessionRowsVisible))
+        if count > sessionRowsVisible {
+            return 7 + full * (sessionRowHeight + sessionRowSpacing) + sessionRowHeight * 0.65
+        }
+        return 7 + full * sessionRowHeight + (full - 1) * sessionRowSpacing + 9
+    }
+
     static func accent(_ provider: Provider) -> Color {
         let c = provider.accentRGB
         return Color(.sRGB, red: c.r, green: c.g, blue: c.b, opacity: 1)

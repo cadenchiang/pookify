@@ -1,21 +1,31 @@
 import Foundation
 import IslandCore
 
-/// Turns the set of on-disk session files into a single decision about what the island should
-/// show. Stateless: it reaps dead sessions, recovers frozen ones, and surfaces the
-/// highest-priority live session (a permission request always beats one merely working).
-struct IslandDecision {
-    var visible: Bool
+/// One session as the UI shows it: its effective (display) state plus the strings the pill and
+/// the session stack render. `id` is the hook's session id, so a row keeps its identity across
+/// polls (SwiftUI diffing, pinning).
+struct SessionInfo: Identifiable, Equatable {
+    let id: String
     var provider: Provider
-    var state: AgentState
-    var label: String
-    var detail: String
-    var startedAt: Double
+    var state: AgentState   // effective state (caps/lingers applied), never .idle here
+    var label: String       // "Editing", "Thinking…", "Awaiting permission", …
+    var detail: String      // file basename while in a tool, else empty
+    var project: String     // basename of the session's cwd
+    var startedAt: Double   // turn clock start (0 = no active turn)
+}
+
+/// Turns the set of on-disk session files into a single decision about what the island should
+/// show. Stateless: it reaps dead sessions, recovers frozen ones, and surfaces every live
+/// session, ordered by urgency (a permission request always beats one merely working).
+struct IslandDecision {
+    /// Non-idle sessions, most deserving of attention first: highest priority, then the newest
+    /// turn. `startedAt` (not `ts`) breaks ties so rows don't shuffle mid-turn as heartbeats land.
+    var sessions: [SessionInfo]
+    var visible: Bool
     var liveCount: Int
     var forceExpand: Bool
 
-    static let hidden = IslandDecision(visible: false, provider: .claude, state: .idle,
-                                       label: "", detail: "", startedAt: 0,
+    static let hidden = IslandDecision(sessions: [], visible: false,
                                        liveCount: 0, forceExpand: false)
 }
 
@@ -179,28 +189,35 @@ enum SessionAggregator {
         }.count
         guard !live.isEmpty else { return .hidden }
 
-        // Pick the session most deserving of attention: highest effective priority, then most recent.
-        let lead = live.max { a, b in
-            let pa = effectiveState(a, now: now).priority
-            let pb = effectiveState(b, now: now).priority
-            return pa == pb ? a.ts < b.ts : pa < pb
-        }!
-        let eff = effectiveState(lead, now: now)
+        // Every session with something to say, as the UI will render it. Display-idle sessions
+        // are omitted (they're resting, not gone — their files persist for turn-clock continuity).
+        let sessions: [SessionInfo] = live.compactMap { s in
+            let eff = effectiveState(s, now: now)
+            guard eff != .idle else { return nil }
+            return SessionInfo(
+                id: s.sessionId,
+                provider: s.provider,
+                state: eff,
+                // When a tool has lingered out to thinking, show "Thinking…" rather than the stale tool label.
+                label: (s.state == .tool && eff == .thinking) ? "Thinking…" : s.label,
+                // The file subtitle only makes sense while actually in a tool (not once it lingers out).
+                detail: eff == .tool ? s.detail : "",
+                project: s.project,
+                startedAt: s.startedAt
+            )
+        }.sorted { a, b in
+            if a.state.priority != b.state.priority { return a.state.priority > b.state.priority }
+            // The newest TURN first — `startedAt` is stable for a turn's whole life, so rows never
+            // shuffle just because one session's heartbeat (`ts`) landed after another's.
+            if a.startedAt != b.startedAt { return a.startedAt > b.startedAt }
+            return a.id < b.id
+        }
 
-        let visible = eff != .idle   // hide while everything rests; the app stays alive
-        // When a tool has lingered out to thinking, show "Thinking…" rather than the stale tool label.
-        let label = (lead.state == .tool && eff == .thinking) ? "Thinking…" : lead.label
-        // The file subtitle only makes sense while actually in a tool (not once it lingers out to thinking).
-        let detail = eff == .tool ? lead.detail : ""
         return IslandDecision(
-            visible: visible,
-            provider: lead.provider,
-            state: eff,
-            label: label,
-            detail: detail,
-            startedAt: lead.startedAt,
+            sessions: sessions,
+            visible: !sessions.isEmpty,   // hide while everything rests; the app stays alive
             liveCount: liveCount,
-            forceExpand: eff == .permission
+            forceExpand: sessions.first?.state == .permission
         )
     }
 }

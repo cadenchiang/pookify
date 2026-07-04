@@ -121,9 +121,9 @@ final class NotchWindowController {
         let h = hosting.bounds.height
         let w = hosting.bounds.width
         // Match the pill's real footprint: its width plus a small hover margin, and its fully
-        // expanded height (notch band + drop-down).
+        // expanded height (notch band + drop-down — the drop grows with the session stack).
         let zoneWidth = Theme.wing + model.notchWidth + Theme.wing + 32
-        let zoneHeight = model.topInset + Theme.dropHeight + 24
+        let zoneHeight = model.topInset + model.dropHeight + 24
         // Top-centered box in bottom-left window coordinates.
         let rect = CGRect(x: (w - zoneWidth) / 2,
                           y: h - zoneHeight,
