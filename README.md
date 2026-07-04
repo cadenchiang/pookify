@@ -36,7 +36,7 @@ This adds Pookify to your Applications and sets up Claude Code. Start a session 
 
 Right-click the island to switch between **Clawd** (the crab, default) and the **Spark**.
 
-<img src="docs/change-icon.gif" alt="Switching the Claude icon from the island's right-click menu" width="640">
+<a href="docs/change-icon.gif"><img src="docs/change-icon-poster.png" alt="Switching the Claude icon from the island's right-click menu — click to play" width="640"></a>
 
 
 ## Multiple sessions
