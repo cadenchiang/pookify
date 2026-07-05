@@ -47,8 +47,43 @@ extension NSScreen {
     /// Effective top inset where island content should begin (real notch height or menu bar).
     var islandTopInset: CGFloat { notchSize?.height ?? syntheticNotchHeight }
 
-    /// The screen we should render the island on: prefer a notched screen, else the main screen.
+    /// This display's stable-ish CoreGraphics id, used to remember the user's chosen screen.
+    var displayID: CGDirectDisplayID? {
+        (deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber)?.uint32Value
+    }
+
+    /// The user's preferred island display (by CGDirectDisplayID), or nil for automatic.
+    /// Persisted so the choice survives relaunches.
+    /// Note: CGDirectDisplayID can change across reconnects/reboots; when the saved id
+    /// isn't currently connected we fall back to automatic, so a stale id is self-healing.
+    static var preferredDisplayID: CGDirectDisplayID? {
+        get {
+            let v = UserDefaults.standard.integer(forKey: "preferredDisplayID")
+            return v > 0 ? CGDirectDisplayID(v) : nil
+        }
+        set {
+            if let id = newValue { UserDefaults.standard.set(Int(id), forKey: "preferredDisplayID") }
+            else { UserDefaults.standard.removeObject(forKey: "preferredDisplayID") }
+        }
+    }
+
+    /// True when the saved display preference points at a currently-connected screen (i.e. the
+    /// preference is actually in effect, not lying dormant while we fall back to automatic).
+    static var preferredDisplayConnected: Bool {
+        guard let id = preferredDisplayID else { return false }
+        return screens.contains { $0.displayID == id }
+    }
+
+    /// The screen we should render the island on: the user's chosen display if it's connected,
+    /// else the MacBook's own screen — notched if present, else any built-in panel — and only
+    /// then the main/first screen (e.g. clamshell mode, where no built-in is listed).
     static var islandScreen: NSScreen? {
-        NSScreen.screens.first(where: { $0.hasNotch }) ?? NSScreen.main ?? NSScreen.screens.first
+        if let id = preferredDisplayID,
+           let chosen = screens.first(where: { $0.displayID == id }) {
+            return chosen
+        }
+        return screens.first(where: { $0.hasNotch })
+            ?? screens.first(where: { $0.displayID.map { CGDisplayIsBuiltin($0) != 0 } ?? false })
+            ?? NSScreen.main ?? screens.first
     }
 }

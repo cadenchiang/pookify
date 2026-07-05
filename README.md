@@ -85,6 +85,7 @@ To preview every state without running an agent, see [DEMO.md](DEMO.md).
 ## Limitations
 
 - On a notched Mac (14-inch or 16-inch MacBook Pro, or a notched MacBook Air) the island fuses with the hardware notch. On Macs without one, Pookify draws a notch of the same proportions at the top of the screen, so the experience is the same.
+- With more than one display connected, Pookify shows on the notched screen (or the main one). To move it elsewhere, right-click the island → **Display** and pick a screen; **Automatic** restores the default. The choice is remembered.
 - Building from source needs Xcode's Command Line Tools (`xcode-select --install`).
 
 ## Privacy

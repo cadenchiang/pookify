@@ -51,6 +51,7 @@ final class AppController: NSObject, NSApplicationDelegate {
         model.onSelectSession = { [weak self] id in self?.selectSession(id) }
         model.onQuit = { [weak self] in self?.quit() }
         model.onChooseClaudeStyle = { [weak self] style in self?.chooseClaudeStyle(style) }
+        model.onChooseDisplay = { [weak self] id in self?.chooseDisplay(id) }
         windowController.install()
 
         // Demo/dev: force the expanded presentation so every state can be captured.
@@ -231,6 +232,13 @@ final class AppController: NSObject, NSApplicationDelegate {
     private func chooseClaudeStyle(_ style: ClaudeStyle) {
         model.claudeStyle = style
         UserDefaults.standard.set(style.rawValue, forKey: "claudeStyle")
+    }
+
+    /// Move the island to a chosen display (nil = automatic). The setter persists the choice;
+    /// relocate() repositions the panel onto the newly-elected screen right away.
+    private func chooseDisplay(_ id: CGDirectDisplayID?) {
+        NSScreen.preferredDisplayID = id
+        windowController.relocate()
     }
 
     /// Quit gracefully: de-expand to the slim bar, retract into the notch, and only then

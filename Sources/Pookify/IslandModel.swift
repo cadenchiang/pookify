@@ -1,4 +1,5 @@
 import SwiftUI
+import CoreGraphics
 import IslandCore
 
 /// What the island is currently showing. The app controller pushes updates into this on each
@@ -73,6 +74,8 @@ final class IslandModel: ObservableObject {
     // Context-menu (right-click) wiring, provided by the app controller.
     var onQuit: () -> Void = {}
     var onChooseClaudeStyle: (ClaudeStyle) -> Void = { _ in }
+    /// Pick which display shows the island; nil means automatic (notched screen, else main).
+    var onChooseDisplay: (CGDirectDisplayID?) -> Void = { _ in }
 
     var showsTimer: Bool { state.isWorking && startedAt > 0 }
 }

@@ -6,6 +6,11 @@ to follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+- **Choose which display shows the island.** With more than one screen connected,
+  the right-click menu gains a **Display** submenu: pick any connected screen, or
+  leave it on **Automatic** (the notched screen, else the main one — the previous
+  behavior). The choice is remembered across relaunches, and if the chosen display
+  is later disconnected the island falls back to Automatic on its own.
 - **Multi-session management — the session stack.** With two or more live sessions,
   expanding the island now shows every session as a row: state dot, project name,
   current activity (and file), and its live turn timer — most urgent first (a session

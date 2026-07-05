@@ -135,7 +135,12 @@ final class NotchWindowController {
     /// Call when visibility changes so we don't capture clicks while the island is hidden.
     func refreshInteractivity() { updateInteractiveZone() }
 
-    @objc private func screensChanged() {
+    @objc private func screensChanged() { relocate() }
+
+    /// Move the island onto the currently-elected screen (`NSScreen.islandScreen`), building the
+    /// panel first if it doesn't exist yet. Called on display changes and when the user picks a
+    /// screen from the context menu.
+    func relocate() {
         // A screen appeared after a deferred launch (none available at install time) → build now.
         if panel == nil { install(); return }
         guard let panel, let screen = NSScreen.islandScreen else { return }

@@ -327,8 +327,40 @@ struct IslandPill: View {
             Button((model.claudeStyle == .spark ? "✓ " : "") + "Spark") { chooseStyle(.spark) }
             Button((model.claudeStyle == .crab ? "✓ " : "") + "Clawd (crab)") { chooseStyle(.crab) }
         }
+        if NSScreen.screens.count > 1 {
+            Menu("Display") {
+                // Automatic owns the check whenever the preference isn't in effect — including a
+                // saved display that's currently disconnected, so the menu never shows no choice.
+                Button((NSScreen.preferredDisplayConnected ? "" : "✓ ") + "Automatic") { chooseDisplay(nil) }
+                Divider()
+                ForEach(NSScreen.screens, id: \.self) { screen in
+                    if let id = screen.displayID {
+                        Button((NSScreen.preferredDisplayID == id ? "✓ " : "") + screenLabel(screen)) {
+                            chooseDisplay(id)
+                        }
+                    }
+                }
+            }
+        }
         Divider()
         Button("Quit") { model.onQuit() }
+    }
+
+    /// A human-readable menu label for a display, marking the built-in (notched) and primary
+    /// screens so identically-named externals stay distinguishable. (`screens.first` is the
+    /// primary display — NSScreen.main is merely the one with keyboard focus, which changes
+    /// with whatever app is frontmost.)
+    private func screenLabel(_ screen: NSScreen) -> String {
+        var name = screen.localizedName
+        if screen.hasNotch { name += " (built-in)" }
+        else if screen == NSScreen.screens.first { name += " (main)" }
+        return name
+    }
+
+    private func chooseDisplay(_ id: CGDirectDisplayID?) {
+        hoverWork?.cancel()
+        model.hovering = false
+        model.onChooseDisplay(id)
     }
 
     /// Apply a Claude icon choice and drop the hover state. Opening the context menu can swallow the
