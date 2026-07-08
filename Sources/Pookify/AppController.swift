@@ -148,6 +148,19 @@ final class AppController: NSObject, NSApplicationDelegate {
             // feeds the expanded stack. The window's interactive zone depends on the session
             // count (the stack is taller), so refresh it when the count moves.
             let shown = displayedSession(d)!   // d.visible ⇒ sessions is non-empty
+            // Auto-open the island the moment a session finishes: rising edge of a session we were
+            // already tracking reaching a finished state (.done/.completed) that it wasn't in on the
+            // previous poll. One-shot — the user can click away to collapse (global click monitor).
+            // Guarded on the id being present before + not already finished so it fires on the
+            // transition only (never for a pre-existing completed session on the first poll, nor a
+            // brand-new session that shows up already done).
+            let finishedStates: Set<AgentState> = [.done, .completed]
+            let prevIds = Set(model.sessions.map(\.id))
+            let prevFinished = Set(model.sessions.filter { finishedStates.contains($0.state) }.map(\.id))
+            let justFinished = d.sessions.contains {
+                finishedStates.contains($0.state) && prevIds.contains($0.id) && !prevFinished.contains($0.id)
+            }
+            if justFinished { setExpanded(true) }
             if model.sessions != d.sessions {
                 let countChanged = model.sessions.count != d.sessions.count
                 model.sessions = d.sessions

@@ -85,16 +85,25 @@ enum SessionAggregator {
         func aliveWithin(_ cap: TimeInterval) -> Bool {
             now - max(s.ts, transcriptMTime(s)) <= cap
         }
+        // When a working session goes quiet past the backstop and it actually did work
+        // (`started`), treat it as FINISHED (.completed), not .idle. A clean finish fires the
+        // Stop hook (→ .done → .completed), but that hook is sometimes dropped — notably the VS
+        // Code extension, or a turn whose last act was a tool whose completion hook never landed
+        // — leaving the snapshot stuck on .thinking/.tool ("Running command…"). Without this it
+        // would silently flip to .idle (hidden) and the finished session vanishes instead of
+        // showing as Done. An interrupted turn is already caught upstream (interruptedAt → .idle),
+        // so it never reaches here; a never-worked session (started == false) still goes .idle.
+        func quietFallback() -> AgentState { s.started ? .completed : .idle }
         switch s.state {
         case .thinking:
-            return aliveWithin(workBackstopCap) ? .thinking : .idle
+            return aliveWithin(workBackstopCap) ? .thinking : quietFallback()
         case .tool:
             // A finished tool (toolEndsAt > 0) lingers briefly so fast tools are visible, then the
             // session is back to reasoning — surface that as thinking, not a stale tool label.
             if s.toolEndsAt > 0 && now > s.toolEndsAt {
-                return aliveWithin(workBackstopCap) ? .thinking : .idle
+                return aliveWithin(workBackstopCap) ? .thinking : quietFallback()
             }
-            return aliveWithin(workBackstopCap) ? .tool : .idle
+            return aliveWithin(workBackstopCap) ? .tool : quietFallback()
         case .permission:
             return (now - s.ts > permissionCap) ? .idle : .permission
         case .done:
