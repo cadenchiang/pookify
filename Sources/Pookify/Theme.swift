@@ -30,6 +30,9 @@ enum Theme {
     // A calm green for finished ("completed") sessions — distinct from the working accent (orange)
     // and the attention amber, so a resting done session reads as done at a glance.
     static let green = Color(.sRGB, red: 0.36, green: 0.80, blue: 0.50, opacity: 1)
+    // A light, vivid violet for the compacting state — distinct from the orange working accent and
+    // reads cleanly on the pure-black pill.
+    static let purple = Color(.sRGB, red: 0.71, green: 0.55, blue: 0.96, opacity: 1)
 
     // Pill geometry shared by the view and the window's interactive-zone math.
     static let wing: CGFloat = 56        // each side wing (glyph / timer) of the closed bar
@@ -39,7 +42,7 @@ enum Theme {
     // With 2+ live sessions the expanded drop-down becomes a session list instead of the
     // single-session layout. These knobs size it; with one session nothing here applies.
     static let sessionRowHeight: CGFloat = 28   // one session row in the expanded stack
-    static let sessionRowSpacing: CGFloat = 2
+    static let sessionRowSpacing: CGFloat = 0   // rows sit flush against each other
     static let sessionRowsVisible = 3           // full rows shown at most; more sessions scroll
     /// Expanded drop-down height for `count` sessions (single session uses `dropHeight`).
     /// Past `sessionRowsVisible` the list scrolls: two thirds of the next row peek out and
@@ -50,12 +53,25 @@ enum Theme {
         if count > sessionRowsVisible {
             return 7 + full * (sessionRowHeight + sessionRowSpacing) + sessionRowHeight * 0.65
         }
-        return 7 + full * sessionRowHeight + (full - 1) * sessionRowSpacing + 9
+        return 7 + full * sessionRowHeight + (full - 1) * sessionRowSpacing
     }
 
     static func accent(_ provider: Provider) -> Color {
         let c = provider.accentRGB
         return Color(.sRGB, red: c.r, green: c.g, blue: c.b, opacity: 1)
+    }
+
+    /// The status color for a session state — the single source of truth for every dot/accent
+    /// (the collapsed multi-dots, the stack row dots, the underline). Attention amber for
+    /// permission/error, green for a finished session, violet while compacting, else the
+    /// provider's working accent (orange for Claude).
+    static func stateDot(_ state: AgentState, _ provider: Provider) -> Color {
+        switch state {
+        case .permission, .error: return amber
+        case .completed, .done:   return green
+        case .compacting:         return purple
+        default:                  return accent(provider)
+        }
     }
 }
 

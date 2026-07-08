@@ -18,6 +18,7 @@ public enum AgentState: String, Codable, Sendable {
     case idle        // session open, nothing happening
     case thinking    // model is reasoning between tools
     case tool        // running a tool (see `label`/`tool` for which)
+    case compacting  // condensing the conversation (auto or manual /compact) — its own purple state
     case permission  // blocked, awaiting the user's approval
     case done        // a turn just finished (transient celebratory flash → becomes .completed)
     case error       // a turn ended on an error (transient)
@@ -28,9 +29,9 @@ public enum AgentState: String, Codable, Sendable {
     /// Higher = more important to surface when several sessions are live.
     public var priority: Int {
         switch self {
-        case .permission:        return 3
-        case .tool, .thinking:   return 2
-        case .error, .done:      return 1
+        case .permission:              return 3
+        case .tool, .thinking, .compacting: return 2
+        case .error, .done:            return 1
         // A resting, finished session is the least urgent thing to surface, but it is still
         // shown (unlike .idle, which is filtered out entirely) so the stack can list it as done.
         case .completed:         return 0
@@ -38,7 +39,7 @@ public enum AgentState: String, Codable, Sendable {
         }
     }
 
-    public var isWorking: Bool { self == .thinking || self == .tool }
+    public var isWorking: Bool { self == .thinking || self == .tool || self == .compacting }
 }
 
 /// One session's state, written by `island-hook` and read by the app. This is the entire
@@ -65,6 +66,9 @@ public struct SessionSnapshot: Codable, Sendable {
     public var transcript: String // the session's transcript path. The VS Code extension fires NO
                                   // hook when the user pauses/interrupts, so the transcript's final
                                   // entry (the interruption marker) is the only way to notice
+    public var tty: String        // the session's controlling terminal, e.g. "ttys003" (no /dev/
+                                  // prefix). Lets clicking a row jump to the exact terminal tab,
+                                  // even after the agent process has exited. Empty if unknown.
 
     public init(schema: Int = Island.stateSchema,
                 provider: Provider,
@@ -82,7 +86,8 @@ public struct SessionSnapshot: Codable, Sendable {
                 toolEndsAt: Double = 0,
                 detail: String = "",
                 promptId: String = "",
-                transcript: String = "") {
+                transcript: String = "",
+                tty: String = "") {
         self.schema = schema
         self.provider = provider
         self.sessionId = sessionId
@@ -100,6 +105,7 @@ public struct SessionSnapshot: Codable, Sendable {
         self.detail = detail
         self.promptId = promptId
         self.transcript = transcript
+        self.tty = tty
     }
 
     /// Tolerate older/newer files: unknown provider/state decode to safe defaults rather than
@@ -123,6 +129,7 @@ public struct SessionSnapshot: Codable, Sendable {
         detail    = (try? c.decode(String.self, forKey: .detail)) ?? ""
         promptId  = (try? c.decode(String.self, forKey: .promptId)) ?? ""
         transcript = (try? c.decode(String.self, forKey: .transcript)) ?? ""
+        tty       = (try? c.decode(String.self, forKey: .tty)) ?? ""
     }
 }
 

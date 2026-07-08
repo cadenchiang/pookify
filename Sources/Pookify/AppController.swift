@@ -12,6 +12,13 @@ final class AppController: NSObject, NSApplicationDelegate {
 
     private let launchedAt = Date()
     private var notNeededSince: Date?
+    /// Session ids that were in a finished (green) state on the previous poll — the source of
+    /// truth for auto-opening the island the instant a NEW session turns green. Tracked here
+    /// (not derived from `model.sessions`, which drops resting/idle sessions) so a session that
+    /// finishes straight from idle, or between polls, still triggers the open.
+    private var finishedIds: Set<String> = []
+    /// Seeded on the first poll so a session already finished at launch doesn't auto-open.
+    private var didSeedFinished = false
     private let launchGrace: TimeInterval = 5   // settle time before we may quit
     private let idleQuitDelay: TimeInterval = 4 // "nothing running" must persist this long
 
@@ -107,11 +114,17 @@ final class AppController: NSObject, NSApplicationDelegate {
         return top
     }
 
-    /// A click on a session row: pin it to the island (clicking the pinned row unpins → auto).
-    /// Applies immediately so the highlight and closed bar respond to the click, not the next poll.
+    /// A click on a session row jumps to that session's terminal: bring its terminal app to the
+    /// front and, where the terminal is scriptable (Terminal.app / iTerm2), select the exact tab.
+    /// The full snapshot (with pid + tty) is re-read by id since the model's SessionInfo omits them.
     private func selectSession(_ id: String) {
-        model.pinnedId = (model.pinnedId == id) ? nil : id
-        if let d = lastDecision { apply(d) }
+        for url in StateStore.listFiles() {
+            guard let s = StateStore.read(url), s.sessionId == id else { continue }
+            Navigator.focus(agentPid: s.pid, tty: s.tty, cwd: s.cwd)
+            break
+        }
+        // Collapse the island so focus lands cleanly on the terminal.
+        setExpanded(false)
     }
 
     private func apply(_ d: IslandDecision) {
@@ -148,19 +161,20 @@ final class AppController: NSObject, NSApplicationDelegate {
             // feeds the expanded stack. The window's interactive zone depends on the session
             // count (the stack is taller), so refresh it when the count moves.
             let shown = displayedSession(d)!   // d.visible ⇒ sessions is non-empty
-            // Auto-open the island the moment a session finishes: rising edge of a session we were
-            // already tracking reaching a finished state (.done/.completed) that it wasn't in on the
-            // previous poll. One-shot — the user can click away to collapse (global click monitor).
-            // Guarded on the id being present before + not already finished so it fires on the
-            // transition only (never for a pre-existing completed session on the first poll, nor a
-            // brand-new session that shows up already done).
+            // Auto-open the island the moment ANY session turns green: the set of finished
+            // (.done/.completed) session ids gained a member since the last poll. This is tracked
+            // in `finishedIds` (persisted across polls) rather than diffed against model.sessions,
+            // so it fires even when a session finishes straight from a resting/idle state or races
+            // through its working states between two polls — the exact cases the old id-diff missed.
+            // Expanding shows the stack, so you see WHICH session just completed. One-shot per
+            // finish; the user can click away to collapse (global click monitor). Seeded silently on
+            // the first poll so a session already finished at launch never auto-opens.
             let finishedStates: Set<AgentState> = [.done, .completed]
-            let prevIds = Set(model.sessions.map(\.id))
-            let prevFinished = Set(model.sessions.filter { finishedStates.contains($0.state) }.map(\.id))
-            let justFinished = d.sessions.contains {
-                finishedStates.contains($0.state) && prevIds.contains($0.id) && !prevFinished.contains($0.id)
-            }
-            if justFinished { setExpanded(true) }
+            let nowFinished = Set(d.sessions.filter { finishedStates.contains($0.state) }.map(\.id))
+            let newlyGreen = didSeedFinished && !nowFinished.subtracting(finishedIds).isEmpty
+            didSeedFinished = true
+            finishedIds = nowFinished
+            if newlyGreen { setExpanded(true) }
             if model.sessions != d.sessions {
                 let countChanged = model.sessions.count != d.sessions.count
                 model.sessions = d.sessions
@@ -178,7 +192,9 @@ final class AppController: NSObject, NSApplicationDelegate {
             let wasForce = model.forceExpand
             if model.forceExpand != d.forceExpand { model.forceExpand = d.forceExpand }
             if d.forceExpand && !wasForce { setExpanded(true) }
-            else if !d.forceExpand && wasForce { setExpanded(false) }
+            // Don't let a permission clearing on the same poll collapse an open we just triggered
+            // because a session turned green.
+            else if !d.forceExpand && wasForce && !newlyGreen { setExpanded(false) }
         } else if model.isVisible && !hidePending {
             // Hiding: NEVER retract while the pill is tall — whether pinned open, auto-opened for
             // a permission, or just hovered. De-expand to the slim bar first, then retract it.

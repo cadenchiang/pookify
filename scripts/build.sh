@@ -71,6 +71,7 @@ $ICON_PLIST_LINE
   <key>LSMinimumSystemVersion</key>       <string>14.0</string>
   <key>LSUIElement</key>                  <true/>
   <key>NSHighResolutionCapable</key>      <true/>
+  <key>NSAppleEventsUsageDescription</key><string>Pookify jumps to the terminal running a session when you click it in the island — this lets it bring your terminal (e.g. Terminal or iTerm) to the front and select the right tab.</string>
   <key>NSPrincipalClass</key>             <string>NSApplication</string>
 </dict>
 </plist>

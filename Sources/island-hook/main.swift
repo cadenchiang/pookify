@@ -68,8 +68,32 @@ let cwd = str("cwd")
 let project = cwd.isEmpty ? "" : (cwd as NSString).lastPathComponent
 let model = str("model")
 
+/// The session's controlling terminal (e.g. "ttys003"), for click-to-navigate. Resolved from the
+/// agent process's tty via `ps`. Computed once and carried forward on later events (it's stable for
+/// the session) so the common hot-path events never pay for the subprocess.
+func resolveTTY() -> String {
+    let p = Process()
+    p.executableURL = URL(fileURLWithPath: "/bin/ps")
+    p.arguments = ["-o", "tty=", "-p", "\(parentPID)"]
+    let pipe = Pipe()
+    p.standardOutput = pipe
+    p.standardError = FileHandle.nullDevice
+    guard (try? p.run()) != nil else { return "" }
+    p.waitUntilExit()
+    let out = String(decoding: pipe.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+        .trimmingCharacters(in: .whitespacesAndNewlines)
+    return (out == "??" || out == "?") ? "" : out
+}
+
 // Previous snapshot (for turn-start continuity and carrying over fields the event lacks).
 let prev = StateStore.read(StateStore.fileURL(provider: provider, sessionId: sessionId))
+
+// The session's tty is stable, so resolve it once and carry it forward — only the first event of
+// a session pays the `ps` cost.
+let tty: String = {
+    if let t = prev?.tty, !t.isEmpty { return t }
+    return resolveTTY()
+}()
 
 // Claude Code stamps every event of one turn with the same prompt_id. The turn clock
 // (`startedAt`) belongs to a turn, so we key it off this: the clock only restarts when a
@@ -134,7 +158,8 @@ func writeState(_ state: AgentState, label: String, tool: String = "", startedAt
         toolEndsAt: toolEndsAt,
         detail: detail,
         promptId: turnPromptId,
-        transcript: str("transcript_path").isEmpty ? (prev?.transcript ?? "") : str("transcript_path")
+        transcript: str("transcript_path").isEmpty ? (prev?.transcript ?? "") : str("transcript_path"),
+        tty: tty
     )
     StateStore.write(snap)
     debugLog("    wrote state=\(state.rawValue) label=\(label) startedAt=\(String(format: "%.1f", startedAt)) promptId=\(turnPromptId.prefix(8)) (prev.startedAt=\(String(format: "%.1f", prev?.startedAt ?? 0)) prev.state=\(prev?.state.rawValue ?? "nil"))")
@@ -214,7 +239,7 @@ case "subagent-stop":
 case "compact":
     // Stash the trigger ("auto" mid-turn vs "manual" /compact) in the tool field so the
     // compact-restarted session-start above knows whether to keep the turn alive.
-    writeState(.tool, label: "Compacting…", tool: "compact-\(str("trigger"))",
+    writeState(.compacting, label: "Compacting…", tool: "compact-\(str("trigger"))",
                startedAt: turnStart(), started: true)
 
 case "permission":

@@ -31,8 +31,9 @@ struct IslandDecision {
 
 enum SessionAggregator {
 
-    /// How long a transient state stays on screen before the island collapses.
-    static let doneLinger: TimeInterval = 2.5
+    /// How long a finished ("Done") session stays on screen before the island collapses — long
+    /// enough to read the green "Done" after the island auto-opens on completion.
+    static let doneLinger: TimeInterval = 6.0
     static let errorLinger: TimeInterval = 3.5
     // Display caps: when a session stops updating (interrupt, closed extension tab) its last
     // state must not stay on screen forever, so a quiet session goes *display-idle* after a
@@ -97,6 +98,10 @@ enum SessionAggregator {
         switch s.state {
         case .thinking:
             return aliveWithin(workBackstopCap) ? .thinking : quietFallback()
+        case .compacting:
+            // Compaction is real, sometimes long work; hold the purple state while alive, and if it
+            // goes quiet past the backstop fall through to Done/idle just like thinking/tool.
+            return aliveWithin(workBackstopCap) ? .compacting : quietFallback()
         case .tool:
             // A finished tool (toolEndsAt > 0) lingers briefly so fast tools are visible, then the
             // session is back to reasoning — surface that as thinking, not a stale tool label.
@@ -207,8 +212,20 @@ enum SessionAggregator {
         // the pre-stack behavior.
         let effs = live.map { effectiveState($0, now: now) }
         let anyActive = effs.contains { $0 != .idle && $0 != .completed }
+        // "Busy" = something genuinely demanding attention: working, awaiting permission, or an
+        // error flash. When nothing is busy but two or more sessions have finished, keep the whole
+        // finished set on screen as a green "all done" roster — each row a green check — instead of
+        // receding to a single big checkmark. A lone finished session still flashes done and then
+        // recedes, exactly as one session always has.
+        let busy = effs.contains { $0.isWorking || $0 == .permission || $0 == .error }
+        let finishedCount = effs.filter { $0 == .completed || $0 == .done }.count
+        let allDoneRoster = !busy && finishedCount >= 2
         func displayState(_ i: Int) -> AgentState {
             let e = effs[i]
+            if allDoneRoster {
+                // Surface every finished session as a calm green check, not the orange done flash.
+                return (e == .completed || e == .done) ? .completed : .idle
+            }
             if e == .completed, !anyActive { return .idle }
             return e
         }

@@ -110,7 +110,7 @@ struct IslandPill: View {
 
     var body: some View {
         let topR: CGFloat = 7
-        let bottomR: CGFloat = expanded ? 20 : max(10, closedH * 0.40)
+        let bottomR: CGFloat = expanded ? 14 : max(10, closedH * 0.40)
         let shape = NotchShape(topRadius: topR, bottomRadius: bottomR)
 
         ZStack(alignment: .top) {
@@ -169,18 +169,13 @@ struct IslandPill: View {
     }
 
     @ViewBuilder private var rightStatus: some View {
-        if model.isMulti && model.state.isWorking {
-            // Several sessions, several clocks — one timer would just be whichever session
-            // happens to lead, which reads as wrong. Show how many are live instead; the
-            // per-session timers live in the stack. (Permission/done/error still take over
-            // below, exactly as with one session.)
-            Text("\(model.sessions.count)")
-                .font(.system(size: 10.5, weight: .semibold).monospacedDigit())
-                .foregroundStyle(.white.opacity(0.95))
-                .lineLimit(1)
-                .padding(.horizontal, 6.5)
-                .padding(.vertical, 2.5)
-                .background(Capsule().fill(.white.opacity(0.13)))
+        if model.isMulti {
+            // With 2+ live sessions, show one status dot per session (colored by its state) next to
+            // the total count — so you can see how many are running AND where each one is at a
+            // glance: working (orange), compacting (violet), awaiting permission/error (amber), done
+            // (green). Per-session timers live in the expanded stack; a single lead timer up here
+            // would just read as wrong when several clocks are running.
+            multiStatus
         } else if model.showsTimer {
             TimerText(startedAt: model.startedAt)
                 .font(.system(size: 12, weight: .semibold).monospacedDigit())
@@ -190,16 +185,12 @@ struct IslandPill: View {
             switch model.state {
             case .permission:
                 Circle().fill(Theme.amber).frame(width: 8, height: 8)
-            case .done:
+            case .done, .completed:
+                // A finished session — a calm green check. "Done" reads green the whole time it's
+                // on screen (no orange just-finished flash), matching the green Done in the stack.
                 Image(systemName: "checkmark")
-                    .font(.system(size: iconSize * 0.62, weight: .bold))
-                    .foregroundStyle(Theme.accent(model.provider))
-            case .completed:
-                // A resting, finished session: a calm green check (the just-finished .done flash
-                // uses the orange accent; green tells apart "done and waiting" from "just done").
-                Image(systemName: "checkmark")
-                    .font(.system(size: iconSize * 0.58, weight: .bold))
-                    .foregroundStyle(Theme.green.opacity(0.9))
+                    .font(.system(size: iconSize * 0.6, weight: .bold))
+                    .foregroundStyle(Theme.green)
             case .error:
                 Image(systemName: "exclamationmark.triangle.fill")
                     .font(.system(size: iconSize * 0.6, weight: .semibold))
@@ -208,6 +199,26 @@ struct IslandPill: View {
                 Color.clear
             }
         }
+    }
+
+    /// The collapsed multi-session indicator: a colored dot per session + the total count. The
+    /// notch wing is narrow, so past `maxDots` sessions the dots cap (the count still reflects the
+    /// true total) rather than overflow the bar. Dots follow the stack order (most urgent first).
+    private var maxDots: Int { 5 }
+    private var multiStatus: some View {
+        HStack(spacing: 4) {
+            HStack(spacing: 2.5) {
+                ForEach(model.sessions.prefix(maxDots)) { s in
+                    Circle()
+                        .fill(Theme.stateDot(s.state, s.provider))
+                        .frame(width: 5.5, height: 5.5)
+                }
+            }
+            Text("\(model.sessions.count)")
+                .font(.system(size: 11.5, weight: .semibold).monospacedDigit())
+                .foregroundStyle(.white.opacity(0.95))
+        }
+        .lineLimit(1)
     }
 
     // MARK: drop-down (the taller part — words live here)
@@ -224,12 +235,13 @@ struct IslandPill: View {
     private var singleDrop: some View {
         VStack(spacing: 4) {
             if model.state.isWorking {
-                // Live "AI shimmer" sweeping across the current activity word + dots.
-                WorkingLabel(word: statusWord)
+                // Live "AI shimmer" sweeping across the current activity word + dots. Compaction
+                // shimmers in violet so the state reads as distinct from ordinary work.
+                WorkingLabel(word: statusWord, tint: model.state == .compacting ? Theme.purple : .white)
             } else {
                 Text(statusTitle)
                     .font(.system(size: 13.5, weight: .semibold))
-                    .foregroundStyle(.white)
+                    .foregroundStyle(statusTitleColor)
                     .lineLimit(1)
             }
             Capsule()
@@ -269,7 +281,7 @@ struct IslandPill: View {
             }
             .padding(.horizontal, 6)   // slim insets: rows need every point of width
             .padding(.top, 7)
-            .padding(.bottom, 9)
+            .padding(.bottom, 0)       // last row sits flush against the pill's bottom edge
         }
         .scrollIndicators(.hidden)
         .scrollBounceBehavior(.basedOnSize)
@@ -378,10 +390,15 @@ struct IslandPill: View {
         model.onChooseClaudeStyle(style)
     }
 
-    private var accentColor: Color {
+    private var accentColor: Color { Theme.stateDot(model.state, model.provider) }
+
+    /// The finished "Done" title reads green (matching its check); permission/error stay amber;
+    /// everything else is plain white.
+    private var statusTitleColor: Color {
         switch model.state {
+        case .done, .completed:   return Theme.green
         case .permission, .error: return Theme.amber
-        default:                  return Theme.accent(model.provider)
+        default:                  return .white
         }
     }
 
@@ -466,20 +483,23 @@ private struct SessionRow: View {
         .animation(.easeOut(duration: 0.15), value: isDisplayed)
     }
 
-    private var dotColor: Color {
-        switch session.state {
-        case .permission, .error: return Theme.amber
-        case .completed:          return Theme.green
-        default:                  return Theme.accent(session.provider)
-        }
-    }
+    private var dotColor: Color { Theme.stateDot(session.state, session.provider) }
 
     private var activityText: some View {
         Text(activityWord)
             .font(.system(size: 10.5))
-            .foregroundStyle(session.state == .permission ? Theme.amber : .white.opacity(0.52))
+            .foregroundStyle(activityColor)
             .lineLimit(1)
             .truncationMode(.tail)
+    }
+
+    /// "Done" reads green (matching its check); permission amber; other activity a dim white.
+    private var activityColor: Color {
+        switch session.state {
+        case .done, .completed: return Theme.green
+        case .permission:       return Theme.amber
+        default:                return .white.opacity(0.52)
+        }
     }
 
     private var detailText: some View {
@@ -514,11 +534,7 @@ private struct SessionRow: View {
             TimerText(startedAt: session.startedAt)
                 .font(.system(size: 10.5, weight: .semibold).monospacedDigit())
                 .foregroundStyle(.white.opacity(session.state == .permission ? 0.55 : 0.8))
-        } else if session.state == .done {
-            Image(systemName: "checkmark")
-                .font(.system(size: 9, weight: .bold))
-                .foregroundStyle(Theme.accent(session.provider))
-        } else if session.state == .completed {
+        } else if session.state == .done || session.state == .completed {
             Image(systemName: "checkmark")
                 .font(.system(size: 9, weight: .bold))
                 .foregroundStyle(Theme.green)
@@ -534,6 +550,7 @@ private struct SessionRow: View {
 /// text) plus an animated ellipsis. Driven from absolute time so the motion is smooth and continuous.
 struct WorkingLabel: View {
     let word: String
+    var tint: Color = .white
 
     var body: some View {
         // 30 updates/s is visually indistinguishable for a slow 2.6s shimmer sweep and gentle
@@ -569,8 +586,8 @@ struct WorkingLabel: View {
         let p = (t.truncatingRemainder(dividingBy: period)) / period   // 0..1
         let c = p * 1.4 - 0.2                                            // band center: -0.2 … 1.2
         func loc(_ v: Double) -> Double { min(1, max(0, v)) }
-        let dim = Color.white.opacity(0.62)
-        let bright = Color.white.opacity(0.9)
+        let dim = tint.opacity(0.62)
+        let bright = tint.opacity(0.9)
         return LinearGradient(
             stops: [
                 .init(color: dim,    location: 0),
