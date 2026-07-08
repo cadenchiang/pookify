@@ -61,6 +61,28 @@ enum SessionAggregator {
         return kill(pid, 0) == 0 || errno == EPERM
     }
 
+    /// Whether the agent process has a live child — i.e. it's actively running a command right now
+    /// (a foreground tool, a build, or a background shell). This is the ground truth that tells a
+    /// genuinely long, quiet turn apart from a finished one whose Stop hook was dropped: a 40-minute
+    /// build or a turn parked on a background shell emits NO hooks and writes NO transcript while it
+    /// waits, yet its process subtree has live work; a finished turn is just the idle REPL with no
+    /// children. Consulted only on the quiet-backstop path, so its `pgrep` cost is never on the hot
+    /// path.
+    static func agentHasLiveWork(_ pid: Int32) -> Bool {
+        guard pid > 0 else { return false }
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: "/usr/bin/pgrep")
+        p.arguments = ["-P", "\(pid)"]   // direct children of the agent process
+        let pipe = Pipe()
+        p.standardOutput = pipe
+        p.standardError = FileHandle.nullDevice
+        guard (try? p.run()) != nil else { return false }
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        p.waitUntilExit()
+        return !String(decoding: data, as: UTF8.self)
+            .trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
     /// Modification time of the session's transcript, or 0 if none. The turn writes to its
     /// transcript continuously while alive, so this is a liveness signal that survives the gaps
     /// between hooks; it freezes the instant a turn is interrupted.
@@ -86,6 +108,14 @@ enum SessionAggregator {
         func aliveWithin(_ cap: TimeInterval) -> Bool {
             now - max(s.ts, transcriptMTime(s)) <= cap
         }
+        // A working session is alive if a hook fired / the transcript moved within the backstop OR —
+        // when it's gone quiet past that — the agent still has a live child command running. That
+        // second clause is what keeps a long build or a turn parked on a background shell from being
+        // wrongly declared "Done" after 15 quiet minutes; short-circuits so `pgrep` only runs on the
+        // rare quiet path.
+        func working(within cap: TimeInterval) -> Bool {
+            aliveWithin(cap) || agentHasLiveWork(s.pid)
+        }
         // When a working session goes quiet past the backstop and it actually did work
         // (`started`), treat it as FINISHED (.completed), not .idle. A clean finish fires the
         // Stop hook (→ .done → .completed), but that hook is sometimes dropped — notably the VS
@@ -97,18 +127,18 @@ enum SessionAggregator {
         func quietFallback() -> AgentState { s.started ? .completed : .idle }
         switch s.state {
         case .thinking:
-            return aliveWithin(workBackstopCap) ? .thinking : quietFallback()
+            return working(within: workBackstopCap) ? .thinking : quietFallback()
         case .compacting:
             // Compaction is real, sometimes long work; hold the purple state while alive, and if it
             // goes quiet past the backstop fall through to Done/idle just like thinking/tool.
-            return aliveWithin(workBackstopCap) ? .compacting : quietFallback()
+            return working(within: workBackstopCap) ? .compacting : quietFallback()
         case .tool:
             // A finished tool (toolEndsAt > 0) lingers briefly so fast tools are visible, then the
             // session is back to reasoning — surface that as thinking, not a stale tool label.
             if s.toolEndsAt > 0 && now > s.toolEndsAt {
-                return aliveWithin(workBackstopCap) ? .thinking : quietFallback()
+                return working(within: workBackstopCap) ? .thinking : quietFallback()
             }
-            return aliveWithin(workBackstopCap) ? .tool : quietFallback()
+            return working(within: workBackstopCap) ? .tool : quietFallback()
         case .permission:
             return (now - s.ts > permissionCap) ? .idle : .permission
         case .done:
