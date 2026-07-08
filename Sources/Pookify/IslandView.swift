@@ -194,6 +194,12 @@ struct IslandPill: View {
                 Image(systemName: "checkmark")
                     .font(.system(size: iconSize * 0.62, weight: .bold))
                     .foregroundStyle(Theme.accent(model.provider))
+            case .completed:
+                // A resting, finished session: a calm green check (the just-finished .done flash
+                // uses the orange accent; green tells apart "done and waiting" from "just done").
+                Image(systemName: "checkmark")
+                    .font(.system(size: iconSize * 0.58, weight: .bold))
+                    .foregroundStyle(Theme.green.opacity(0.9))
             case .error:
                 Image(systemName: "exclamationmark.triangle.fill")
                     .font(.system(size: iconSize * 0.6, weight: .semibold))
@@ -383,6 +389,7 @@ struct IslandPill: View {
         switch model.state {
         case .permission: return "Awaiting permission"
         case .done:       return "Done"
+        case .completed:  return "Done"
         case .error:      return "Error"
         case .idle:       return "Idle"
         default:          return model.label.isEmpty ? "Working…" : model.label
@@ -462,6 +469,7 @@ private struct SessionRow: View {
     private var dotColor: Color {
         switch session.state {
         case .permission, .error: return Theme.amber
+        case .completed:          return Theme.green
         default:                  return Theme.accent(session.provider)
         }
     }
@@ -493,6 +501,7 @@ private struct SessionRow: View {
         switch session.state {
         case .permission: return "Awaiting permission"
         case .done:       return "Done"
+        case .completed:  return "Done"
         case .error:      return "Error"
         default:          return session.label.isEmpty ? "Working…" : session.label
         }
@@ -509,6 +518,10 @@ private struct SessionRow: View {
             Image(systemName: "checkmark")
                 .font(.system(size: 9, weight: .bold))
                 .foregroundStyle(Theme.accent(session.provider))
+        } else if session.state == .completed {
+            Image(systemName: "checkmark")
+                .font(.system(size: 9, weight: .bold))
+                .foregroundStyle(Theme.green)
         } else if session.state == .error {
             Image(systemName: "exclamationmark.triangle.fill")
                 .font(.system(size: 9, weight: .semibold))

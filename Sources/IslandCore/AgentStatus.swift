@@ -19,8 +19,11 @@ public enum AgentState: String, Codable, Sendable {
     case thinking    // model is reasoning between tools
     case tool        // running a tool (see `label`/`tool` for which)
     case permission  // blocked, awaiting the user's approval
-    case done        // a turn just finished (transient → collapses to idle)
+    case done        // a turn just finished (transient celebratory flash → becomes .completed)
     case error       // a turn ended on an error (transient)
+    case completed   // a finished turn, kept in the stack so you can see which sessions are done;
+                     // shown only while another session is still active — once the whole batch
+                     // rests the island recedes, exactly as it always has with one session
 
     /// Higher = more important to surface when several sessions are live.
     public var priority: Int {
@@ -28,6 +31,9 @@ public enum AgentState: String, Codable, Sendable {
         case .permission:        return 3
         case .tool, .thinking:   return 2
         case .error, .done:      return 1
+        // A resting, finished session is the least urgent thing to surface, but it is still
+        // shown (unlike .idle, which is filtered out entirely) so the stack can list it as done.
+        case .completed:         return 0
         case .idle:              return 0
         }
     }

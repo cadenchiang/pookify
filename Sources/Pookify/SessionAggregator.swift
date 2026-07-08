@@ -98,9 +98,17 @@ enum SessionAggregator {
         case .permission:
             return (now - s.ts > permissionCap) ? .idle : .permission
         case .done:
-            return (now - s.ts <= doneLinger) ? .done : .idle
+            // A just-finished turn flashes .done briefly (the collapsed check), then settles into
+            // .completed — kept in the stack as "Done" rather than vanishing, so you can glance at
+            // the island and see which sessions have finished. It clears when the session's next
+            // turn overwrites the file (back to thinking/tool) or the session closes (file reaped).
+            return (now - s.ts <= doneLinger) ? .done : .completed
         case .error:
+            // An errored turn must NOT rest as "Done" — after its flash it goes display-idle, as
+            // before. (A resting "failed" row would need its own state to stay honest.)
             return (now - s.ts <= errorLinger) ? .error : .idle
+        case .completed:
+            return .completed
         case .idle:
             return .idle
         }
@@ -181,19 +189,35 @@ enum SessionAggregator {
             live.append(snap)
         }
 
+        // Effective state per session, then a visibility rule for finished ("completed") ones.
+        // A finished session stays on screen only while ANY other session is still active
+        // (working / permission / a transient done-or-error flash) — that's when "1 done, 1
+        // still going" is worth a glance. The moment nothing is active the completed ones go
+        // display-idle too and the island recedes, exactly as a single session always has:
+        // with one session the done flash plays and the notch goes dark, pixel-identical to
+        // the pre-stack behavior.
+        let effs = live.map { effectiveState($0, now: now) }
+        let anyActive = effs.contains { $0 != .idle && $0 != .completed }
+        func displayState(_ i: Int) -> AgentState {
+            let e = effs[i]
+            if e == .completed, !anyActive { return .idle }
+            return e
+        }
+
         // Sessions that are visibly doing something — or only went quiet moments ago — keep the
         // app alive. Long-idle files (e.g. closed extension sessions whose host pid persists)
         // don't, so the app can still quit itself.
-        let liveCount = live.filter {
-            effectiveState($0, now: now) != .idle || now - $0.ts <= appHold
+        let liveCount = live.indices.filter {
+            displayState($0) != .idle || now - live[$0].ts <= appHold
         }.count
         guard !live.isEmpty else { return .hidden }
 
         // Every session with something to say, as the UI will render it. Display-idle sessions
         // are omitted (they're resting, not gone — their files persist for turn-clock continuity).
-        let sessions: [SessionInfo] = live.compactMap { s in
-            let eff = effectiveState(s, now: now)
+        let sessions: [SessionInfo] = live.indices.compactMap { i -> SessionInfo? in
+            let eff = displayState(i)
             guard eff != .idle else { return nil }
+            let s = live[i]
             return SessionInfo(
                 id: s.sessionId,
                 provider: s.provider,
