@@ -11,24 +11,26 @@ enum SparkAssets {
         Data(base64Encoded: $0).flatMap(NSImage.init(data:))
     }
     private static let orange = NSColor(srgbRed: 0.851, green: 0.467, blue: 0.341, alpha: 1)
-    static let tinted: [NSImage] = masks.map { mask in
+    // Matches Theme.green — the resting logo turns green when everything's done.
+    private static let green = NSColor(srgbRed: 0.36, green: 0.80, blue: 0.50, alpha: 1)
+
+    /// Fill `mask`'s alpha with `color` (a solid-color silhouette of the artwork).
+    private static func bake(_ mask: NSImage, _ color: NSColor) -> NSImage {
         NSImage(size: NSSize(width: 120, height: 120), flipped: false) { rect in
-            orange.setFill(); rect.fill()
+            color.setFill(); rect.fill()
             mask.draw(in: rect, from: .zero, operation: .destinationIn, fraction: 1.0)
             return true
         }
     }
 
+    static let tinted: [NSImage] = masks.map { bake($0, orange) }
+
     /// The COMPLETE Claude mark (not a morph frame) — a full sunburst with every ray. Shown static
     /// when the spark isn't animating (done/resting) so it reads as the whole logo, never cut off.
-    static let logoTinted: NSImage? = {
-        guard let logo = Data(base64Encoded: claudeLogoPNG).flatMap(NSImage.init(data:)) else { return nil }
-        return NSImage(size: NSSize(width: 120, height: 120), flipped: false) { rect in
-            orange.setFill(); rect.fill()
-            logo.draw(in: rect, from: .zero, operation: .destinationIn, fraction: 1.0)
-            return true
-        }
-    }()
+    private static let logo: NSImage? = Data(base64Encoded: claudeLogoPNG).flatMap(NSImage.init(data:))
+    static let logoTinted: NSImage? = logo.map { bake($0, orange) }
+    /// Same logo in green — shown when everything has finished.
+    static let logoGreen: NSImage? = logo.map { bake($0, green) }
 }
 
 /// The Clawd crab walk cycle (20 full-color pixel-art frames): the little crab that scuttles while
@@ -74,6 +76,9 @@ struct CrabWalkView: View {
     var fps: Double = 12.5
     var size: CGFloat = 18
     var animate: Bool = true
+    /// When set, the crab is drawn as a solid silhouette in this color instead of its full-color
+    /// sprite — used to turn it green once everything's done.
+    var tint: Color? = nil
     var body: some View {
         let frames = CrabAssets.frames
         // Sample at ~2× the walk's frame rate and pause while still: identical frames, ~10× less
@@ -88,9 +93,15 @@ struct CrabWalkView: View {
             let facingLeft = (animate && n > 0) && (tick / n) % 2 == 1
             Group {
                 if frames.indices.contains(idx) {
-                    Image(nsImage: frames[idx]).resizable().interpolation(.none).aspectRatio(contentMode: .fit)
+                    let sprite = Image(nsImage: frames[idx])
+                        .resizable().interpolation(.none).aspectRatio(contentMode: .fit)
+                    if let tint {
+                        Rectangle().fill(tint).mask(sprite)
+                    } else {
+                        sprite
+                    }
                 } else {
-                    Circle().fill(Theme.accent(.claude)).frame(width: size * 0.5, height: size * 0.5)
+                    Circle().fill(tint ?? Theme.accent(.claude)).frame(width: size * 0.5, height: size * 0.5)
                 }
             }
             .frame(width: size, height: size)
@@ -113,16 +124,20 @@ struct AgentGlyph: View {
     let provider: Provider
     var claudeStyle: ClaudeStyle = .spark
     var working: Bool = true
+    /// Everything is finished — the mark turns green (a green crab / green logo) so "all done"
+    /// reads at a glance from the notch, even before you expand the stack.
+    var done: Bool = false
     var size: CGFloat = 18
 
     @ViewBuilder var body: some View {
         if claudeStyle == .crab {
-            CrabWalkView(size: size, animate: working)
+            // Keep the crab walking even when done — just green. Only a truly idle island stops him.
+            CrabWalkView(size: size, animate: working || done, tint: done ? Theme.green : nil)
         } else if working {
             // morphing thinking-spark while active
             FrameSparkView(frames: SparkAssets.tinted, size: size, animate: true)
-        } else if let logo = SparkAssets.logoTinted {
-            // resting/done → the COMPLETE Claude logo, static (full, never cut off)
+        } else if let logo = done ? SparkAssets.logoGreen : SparkAssets.logoTinted {
+            // resting → the COMPLETE Claude logo, static (full, never cut off); green when done.
             Image(nsImage: logo).resizable().interpolation(.high)
                 .frame(width: size, height: size)
         } else {

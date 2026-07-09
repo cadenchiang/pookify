@@ -153,7 +153,9 @@ struct IslandPill: View {
             // Animates while working; when the turn is done it rests on its fullest frame (a
             // complete spark next to the checkmark), never frozen mid-morph.
             AgentGlyph(provider: model.provider, claudeStyle: model.claudeStyle,
-                       working: model.state.isWorking, size: iconSize)
+                       working: model.state.isWorking,
+                       done: model.state == .done || model.state == .completed,
+                       size: iconSize)
                 .frame(width: iconSize, height: iconSize)
                 .frame(width: wing, height: closedH)
                 .offset(x: wingInset)                  // nudge toward the notch to optically center
