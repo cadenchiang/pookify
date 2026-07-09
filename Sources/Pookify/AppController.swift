@@ -120,7 +120,7 @@ final class AppController: NSObject, NSApplicationDelegate {
     private func selectSession(_ id: String) {
         for url in StateStore.listFiles() {
             guard let s = StateStore.read(url), s.sessionId == id else { continue }
-            Navigator.focus(agentPid: s.pid, tty: s.tty, cwd: s.cwd)
+            Navigator.focus(sessionId: s.sessionId, agentPid: s.pid, tty: s.tty, cwd: s.cwd)
             break
         }
         // Collapse the island so focus lands cleanly on the terminal.

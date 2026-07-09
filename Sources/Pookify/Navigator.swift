@@ -16,32 +16,117 @@ enum Navigator {
     /// Bundle ids of terminals whose tabs we can address by tty via AppleScript.
     private static let scriptable = ["com.apple.Terminal", "com.googlecode.iterm2"]
 
-    static func focus(agentPid: Int32, tty: String, cwd: String) {
+    static func focus(sessionId: String, agentPid: Int32, tty: String, cwd: String) {
         DispatchQueue.global(qos: .userInitiated).async {
-            // Path 1: the process is alive — activate its owning terminal app RIGHT AWAY. This is
-            // the navigation itself: pure AppKit, no AppleScript, so it never needs the Automation
-            // permission and can never block. Tab selection (AppleScript) is a best-effort extra
-            // done AFTER activation and hard-bounded by a timeout, so a denied/slow prompt can't
-            // freeze the jump — the terminal is already frontmost regardless.
-            if let owner = owningApp(of: agentPid) {
-                activate(owner)
-                if scriptable.contains(owner.bundleIdentifier ?? ""), !tty.isEmpty {
-                    _ = selectTab(tty: tty, bundleID: owner.bundleIdentifier!)
-                }
+            // The recorded tty can be stale/empty (a session that hadn't fired a hook since the tty
+            // resolver improved). If the process is alive, resolve it fresh from its stdio so the
+            // jump works right now.
+            var tty = tty
+            if tty.isEmpty, agentPid > 0 { tty = resolveTTY(agentPid) }
+
+            // Path 1: the process is alive with an owning GUI app — activate it RIGHT AWAY. Pure
+            // AppKit, no AppleScript, so it never needs the Automation permission and can't block.
+            // Tab selection (AppleScript) is a best-effort extra done AFTER activation and bounded by
+            // a timeout, so a denied/slow prompt can't freeze the jump.
+            if jump(toPid: agentPid, tty: tty) { return }
+
+            // Path 2: a Claude Code BACKGROUND-DAEMON session (launched with --bg-pty-host) has no
+            // terminal in its own process tree — it's parented to launchd and viewed through a
+            // separate foreground `claude` client that attaches to the daemon. Find that client
+            // (it holds a cc-daemon socket referencing this session id) and jump to ITS terminal.
+            // Relies on Claude Code's daemon socket layout, so it's best-effort and may not hold
+            // across CLI versions; if no client is currently attached there's simply nowhere to go.
+            if let client = daemonClientPid(sessionId: sessionId, agentPid: agentPid),
+               jump(toPid: client, tty: "") {
                 return
             }
-            // Path 2: no live process (a finished session) — we can't walk the tree, so probe the
-            // scriptable terminals for the tab holding this tty and activate whichever has it.
-            guard !tty.isEmpty else { return }
-            for bundleID in scriptable {
-                guard let app = NSRunningApplication
-                    .runningApplications(withBundleIdentifier: bundleID).first else { continue }
-                if selectTab(tty: tty, bundleID: bundleID) {
-                    activate(app)
-                    return
-                }
+        }
+    }
+
+    /// Bring the terminal hosting `pid` to the front: activate its owning GUI app (AppKit, no
+    /// permission) and, for scriptable terminals, select the exact tab by tty. Falls back to
+    /// probing scriptable terminals when the process tree has no GUI app but the tty points at a
+    /// real tab. Returns whether anything was activated.
+    private static func jump(toPid pid: Int32, tty: String) -> Bool {
+        let tty = tty.isEmpty ? resolveTTY(pid) : tty
+        if let owner = owningApp(of: pid) {
+            activate(owner)
+            if scriptable.contains(owner.bundleIdentifier ?? ""), !tty.isEmpty {
+                _ = selectTab(tty: tty, bundleID: owner.bundleIdentifier!)
+            }
+            return true
+        }
+        guard !tty.isEmpty else { return false }
+        for bundleID in scriptable {
+            guard let app = NSRunningApplication
+                .runningApplications(withBundleIdentifier: bundleID).first else { continue }
+            if selectTab(tty: tty, bundleID: bundleID) {
+                activate(app)
+                return true
             }
         }
+        return false
+    }
+
+    /// The foreground `claude` client currently attached to a background-daemon session — the thing
+    /// to actually navigate to, since the session's own process is headless. A viewer is a claude
+    /// process running in a REAL terminal (so `owningApp` can reach it) that holds an open file in a
+    /// `cc-daemon` dir referencing this session: either its id, or the session's pty-host socket
+    /// path. Excludes the session's own background processes. Returns nil if no viewer is attached
+    /// (then there's genuinely nowhere to jump).
+    private static func daemonClientPid(sessionId: String, agentPid: Int32) -> Int32? {
+        let shortId = sessionId.split(separator: "-").first.map(String.init) ?? sessionId
+        guard shortId.count >= 4 else { return nil }
+        let ptySock = ptyHostSocket(near: agentPid)   // this session's pty socket path, if any
+        let pids = run("/usr/bin/pgrep", ["-f", "claude"])
+            .split(separator: "\n").compactMap { Int32($0) }
+        for pid in pids where pid != agentPid {
+            // A viewer sits in a real terminal; the background/daemon processes have no tty ("??").
+            let t = run("/bin/ps", ["-o", "tty=", "-p", "\(pid)"])
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            if t.isEmpty || t == "??" || t == "?" { continue }
+            let files = run("/usr/sbin/lsof", ["-p", "\(pid)", "-Fn"])
+            guard files.contains("cc-daemon") else { continue }
+            if files.contains(shortId) || (ptySock.map { files.contains($0) } ?? false) {
+                return pid
+            }
+        }
+        return nil
+    }
+
+    /// The pty-host socket path for the session `pid` belongs to, read from the `--bg-pty-host <path>`
+    /// argument of the session's process or its parent. This is what a viewer client connects to.
+    private static func ptyHostSocket(near pid: Int32) -> String? {
+        for p in [pid, parentPid(pid) ?? 0] where p > 1 {
+            let cmd = run("/bin/ps", ["-o", "command=", "-p", "\(p)"])
+            guard let r = cmd.range(of: "--bg-pty-host ") else { continue }
+            if let token = cmd[r.upperBound...].split(separator: " ").first.map(String.init),
+               token.contains(".pty.sock") {
+                return token
+            }
+        }
+        return nil
+    }
+
+    /// Resolve a live process's terminal from its (or an ancestor's) controlling tty or open stdio,
+    /// mirroring the hook's resolver — so a click works even when the recorded tty is empty.
+    private static func resolveTTY(_ pid: Int32) -> String {
+        var cur = pid
+        var hops = 0
+        while cur > 1 && hops < 12 {
+            let ctl = run("/bin/ps", ["-o", "tty=", "-p", "\(cur)"]).trimmingCharacters(in: .whitespaces)
+                .trimmingCharacters(in: .newlines)
+            if !ctl.isEmpty && ctl != "??" && ctl != "?" { return ctl }
+            // stdio → terminal, via lsof machine output ("n/dev/ttys000").
+            let io = run("/usr/sbin/lsof", ["-a", "-d", "0,1,2", "-p", "\(cur)", "-Fn"])
+            for line in io.split(separator: "\n") where line.hasPrefix("n/dev/ttys") {
+                return String(line.dropFirst("n/dev/".count))
+            }
+            guard let pp = parentPid(cur), pp > 1, pp != cur else { break }
+            cur = pp
+            hops += 1
+        }
+        return ""
     }
 
     private static func activate(_ app: NSRunningApplication) {

@@ -68,21 +68,58 @@ let cwd = str("cwd")
 let project = cwd.isEmpty ? "" : (cwd as NSString).lastPathComponent
 let model = str("model")
 
-/// The session's controlling terminal (e.g. "ttys003"), for click-to-navigate. Resolved from the
-/// agent process's tty via `ps`. Computed once and carried forward on later events (it's stable for
-/// the session) so the common hot-path events never pay for the subprocess.
-func resolveTTY() -> String {
+/// One `ps` field for a pid (e.g. its tty or ppid), trimmed. Empty on any failure.
+func psField(_ field: String, _ pid: Int32) -> String {
     let p = Process()
     p.executableURL = URL(fileURLWithPath: "/bin/ps")
-    p.arguments = ["-o", "tty=", "-p", "\(parentPID)"]
+    p.arguments = ["-o", "\(field)=", "-p", "\(pid)"]
+    let pipe = Pipe()
+    p.standardOutput = pipe
+    p.standardError = FileHandle.nullDevice
+    guard (try? p.run()) != nil else { return "" }
+    p.waitUntilExit()
+    return String(decoding: pipe.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+        .trimmingCharacters(in: .whitespacesAndNewlines)
+}
+
+/// The terminal a pid's stdin/stdout/stderr are wired to, via `lsof` — e.g. "ttys000". This catches
+/// the common case a process has NO *controlling* tty (launched detached / by a wrapper, so `ps tty`
+/// says "??") yet its stdio still goes to a real terminal tab. Returns "" if none.
+func ttyViaStdio(_ pid: Int32) -> String {
+    let p = Process()
+    p.executableURL = URL(fileURLWithPath: "/usr/sbin/lsof")
+    p.arguments = ["-a", "-d", "0,1,2", "-p", "\(pid)", "-Fn"]   // machine output; name fields
     let pipe = Pipe()
     p.standardOutput = pipe
     p.standardError = FileHandle.nullDevice
     guard (try? p.run()) != nil else { return "" }
     p.waitUntilExit()
     let out = String(decoding: pipe.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
-        .trimmingCharacters(in: .whitespacesAndNewlines)
-    return (out == "??" || out == "?") ? "" : out
+    // `-Fn` emits name lines like "n/dev/ttys000". Return the first ttys device found.
+    for line in out.split(separator: "\n") where line.hasPrefix("n/dev/ttys") {
+        return String(line.dropFirst("n/dev/".count))
+    }
+    return ""
+}
+
+/// The session's terminal (e.g. "ttys003"), for click-to-navigate. The agent process often has no
+/// *controlling* tty — it's commonly launched through a wrapper or detached — so we look both at the
+/// controlling tty AND at where its (or an ancestor's) stdio actually points, walking up the process
+/// tree and returning the first real terminal found. Computed once and carried forward on later
+/// events (it's stable for the session), so only the first event pays the `ps`/`lsof` cost.
+func resolveTTY() -> String {
+    var pid = parentPID
+    var hops = 0
+    while pid > 1 && hops < 12 {
+        let ctl = psField("tty", pid)
+        if !ctl.isEmpty && ctl != "??" && ctl != "?" { return ctl }
+        let io = ttyViaStdio(pid)
+        if !io.isEmpty { return io }
+        guard let pp = Int32(psField("ppid", pid)), pp > 1, pp != pid else { break }
+        pid = pp
+        hops += 1
+    }
+    return ""
 }
 
 // Previous snapshot (for turn-start continuity and carrying over fields the event lacks).

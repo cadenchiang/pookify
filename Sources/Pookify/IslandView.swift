@@ -475,14 +475,16 @@ private struct SessionRow: View {
         .padding(.horizontal, 8)
         .frame(height: Theme.sessionRowHeight)
         .background(
+            // Hover-only highlight: no row is ever pre-selected (clicking a row navigates to its
+            // terminal, it doesn't "select" it), so a persistent highlight just read as stuck. A
+            // clear hover fill makes it obvious which row you're about to click.
             RoundedRectangle(cornerRadius: 8)
-                .fill(.white.opacity(isDisplayed ? 0.09 : hovering ? 0.05 : 0))
+                .fill(.white.opacity(hovering ? 0.16 : 0))
         )
         .contentShape(Rectangle())
         .onTapGesture(perform: select)
         .onHover { hovering = $0 }
         .animation(.easeOut(duration: 0.15), value: hovering)
-        .animation(.easeOut(duration: 0.15), value: isDisplayed)
     }
 
     private var dotColor: Color { Theme.stateDot(session.state, session.provider) }
