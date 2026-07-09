@@ -96,7 +96,19 @@ struct CrabWalkView: View {
                     let sprite = Image(nsImage: frames[idx])
                         .resizable().interpolation(.none).aspectRatio(contentMode: .fit)
                     if let tint {
-                        Rectangle().fill(tint).mask(sprite)
+                        // Body = a flat silhouette in EXACTLY the dot green (no multiply, so the color
+                        // matches the status dots precisely), then the crab's darkest pixels (eyes,
+                        // outline) are painted back in on top. The overlay isolates just those dark
+                        // features: desaturate → invert → high contrast so only near-black pixels stay
+                        // opaque → luminanceToAlpha turns that into an alpha stencil of the features.
+                        ZStack {
+                            Rectangle().fill(tint).mask(sprite)
+                            sprite
+                                .saturation(0).colorInvert()
+                                .brightness(-0.25).contrast(4)
+                                .luminanceToAlpha()
+                                .opacity(0.9)
+                        }
                     } else {
                         sprite
                     }
