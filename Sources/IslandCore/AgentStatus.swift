@@ -25,12 +25,18 @@ public enum AgentState: String, Codable, Sendable {
     case completed   // a finished turn, kept in the stack so you can see which sessions are done;
                      // shown only while another session is still active — once the whole batch
                      // rests the island recedes, exactly as it always has with one session
+    case waiting     // the main turn is done but background agents are still running ("Waiting for
+                     // N background agents to finish"). NOT done — shown gray so it reads as
+                     // pending-on-delegates rather than finished.
 
     /// Higher = more important to surface when several sessions are live.
     public var priority: Int {
         switch self {
         case .permission:              return 3
         case .tool, .thinking, .compacting: return 2
+        // Waiting on background agents is still "in flight", so it outranks the transient
+        // done/error flashes but sits below a session actively working right now.
+        case .waiting:                 return 1
         case .error, .done:            return 1
         // A resting, finished session is the least urgent thing to surface, but it is still
         // shown (unlike .idle, which is filtered out entirely) so the stack can list it as done.

@@ -55,7 +55,48 @@ func debugLog(_ msg: String) {
 let dbgSess = str("session_id").isEmpty ? "pid-\(parentPID)" : String(str("session_id").prefix(8))
 if debugOn {
     debugLog("[\(dbgSess)] [\(provider.rawValue)/\(kind)] tool=\(str("tool_name")) type=\(str("notification_type")) source=\(str("source")) permMode=\(str("permission_mode")) keys=\(payload.keys.sorted().joined(separator: ","))")
+    if let bt = payload["background_tasks"] {
+        debugLog("    background_tasks(raw) = \(bt)")
+    }
 }
+
+// The background tasks the CLI is still waiting on after a turn stops. Claude Code stamps a
+// `background_tasks` array onto the Stop and SubagentStop payloads (the roster behind the CLI's
+// "Waiting for N background agents to finish"). Each entry is a dict:
+//   { type: "subagent" | "shell", status: "running" | …, id, description, agent_type|command }
+// so we can tell delegated agents apart from background shell commands, and count only the ones
+// still running. Absent / any other shape reads as empty, so the feature simply doesn't trigger —
+// safe even if this (undocumented) field changes.
+//
+// A subagent still appears as `status:running` in its OWN SubagentStop payload (the roster lags
+// that event by one), so callers pass `excludingId` = the event's `agent_id` to get the true
+// remaining set.
+func runningBackgroundTasks(excludingId: String = "") -> (agents: Int, others: Int) {
+    let arr = (payload["background_tasks"] as? [Any])?.compactMap { $0 as? [String: Any] } ?? []
+    var agents = 0, others = 0
+    for t in arr {
+        if !excludingId.isEmpty, (t["id"] as? String) == excludingId { continue }
+        // A missing status counts as running — better to show "waiting" than a premature "done".
+        let status = ((t["status"] as? String) ?? "running").lowercased()
+        guard status == "running" else { continue }
+        if (t["type"] as? String) == "subagent" { agents += 1 } else { others += 1 }
+    }
+    return (agents, others)
+}
+
+/// The status label for a session parked on background work. Mirrors the CLI's wording for agents
+/// ("Waiting for N agents"); background shells read as "tasks"; a mix reads generically as "tasks".
+func waitingLabel(agents: Int, others: Int) -> String {
+    let n = agents + others
+    if n <= 0 { return "Waiting for agents" }
+    if others == 0 { return n == 1 ? "Waiting for 1 agent" : "Waiting for \(n) agents" }
+    if agents == 0 { return n == 1 ? "Waiting for 1 task"  : "Waiting for \(n) tasks" }
+    return "Waiting for \(n) tasks"
+}
+
+/// This event belongs to a background subagent (its tool calls fire pre/post under the parent
+/// session id, but tagged with agent_id), as opposed to the main agent's own activity.
+let isSubagentEvent = !str("agent_id").isEmpty
 
 // Resolve which session this is. Hook payloads carry session_id; fall back to the agent pid
 // so a payload without one still maps to a stable file for the session's lifetime.
@@ -239,12 +280,28 @@ case "prompt":
                startedAt: sameTurn && carriedStart > 0 ? carriedStart : now(), started: true)
 
 case "pre":
+    // While parked on background agents (main turn already Stopped), the subagents' own tool
+    // calls keep firing pre/post under this session. Don't let them flip the label off
+    // "Waiting …" — hold the waiting state. A tool call from the MAIN agent (no agent_id) means
+    // the turn genuinely resumed, so let that fall through and show the tool.
+    if prev?.state == .waiting, isSubagentEvent {
+        writeState(.waiting, label: prev?.label ?? "Waiting for agents",
+                   startedAt: turnStart(), started: true)
+        break
+    }
     let tool = str("tool_name")
     writeState(.tool, label: toolLabel(provider: provider, tool: tool), tool: tool,
                startedAt: turnStart(), started: true,
                detail: toolDetail())
 
 case "post", "post-fail":
+    // Same as `pre`: a background subagent finishing a tool during the post-turn wait must not
+    // knock the island off "Waiting …". Only the main agent (no agent_id) proceeds normally.
+    if prev?.state == .waiting, isSubagentEvent {
+        writeState(.waiting, label: prev?.label ?? "Waiting for agents",
+                   startedAt: turnStart(), started: true)
+        break
+    }
     // The tool just finished. Keep its label (and the file name) up for a short linger: fast tools
     // fire pre+post within milliseconds — faster than the app's poll — so without this every
     // read/edit/command would flash by too fast to read. The linger holds the label ~1.9s after the
@@ -267,11 +324,23 @@ case "subagent-start":
                startedAt: turnStart(), started: true)
 
 case "subagent-stop":
-    // Only a session that is actually mid-turn goes back to "Thinking…". Claude Code also runs
-    // background auxiliary agents (conversation title, memory) whose SubagentStop lands seconds
-    // AFTER the turn's Stop — that must not resurrect a finished session into a phantom
-    // "Thinking…" island.
-    if let p = prev, p.state == .thinking || p.state == .tool {
+    // A background agent just finished. Exclude it from the roster (it still shows as running in
+    // its own SubagentStop payload) to get what's genuinely left.
+    let remaining = runningBackgroundTasks(excludingId: str("agent_id"))
+    if prev?.state == .waiting {
+        // We were parked waiting on background work. If anything is still running, stay waiting
+        // (refresh the count); if that was the last one, the turn is truly finished → Done.
+        if remaining.agents + remaining.others > 0 {
+            writeState(.waiting, label: waitingLabel(agents: remaining.agents, others: remaining.others),
+                       startedAt: turnStart(), started: true)
+        } else {
+            writeState(.done, label: "Done", startedAt: 0, started: true)
+        }
+    } else if let p = prev, p.state == .thinking || p.state == .tool {
+        // Mid-turn: a delegated (in-turn) subagent returned and the main agent keeps going. Claude
+        // Code also runs background auxiliary agents (conversation title, memory) whose
+        // SubagentStop lands seconds AFTER the turn's Stop — those hit the .done/.completed branch
+        // above (no-op) and never resurrect a finished session into a phantom "Thinking…".
         writeState(.thinking, label: "Thinking…",
                    startedAt: turnStart(), started: true)
     }
@@ -313,7 +382,17 @@ case "stop":
     if prev?.state == .permission {
         debugLog("    ignored spurious stop while awaiting permission")
     } else {
-        writeState(.done, label: "Done", startedAt: 0, started: true)
+        // The main turn has stopped, but if background agents are still running the turn is NOT
+        // done — the CLI shows "Waiting for N background agents to finish". Reflect that as a
+        // distinct (gray) waiting state, keeping the turn clock, instead of a premature "Done".
+        // The real Done lands later, when the last background agent's SubagentStop fires.
+        let bg = runningBackgroundTasks()
+        if bg.agents + bg.others > 0 {
+            writeState(.waiting, label: waitingLabel(agents: bg.agents, others: bg.others),
+                       startedAt: turnStart(), started: true)
+        } else {
+            writeState(.done, label: "Done", startedAt: 0, started: true)
+        }
     }
 
 case "stop-fail":

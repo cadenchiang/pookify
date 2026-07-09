@@ -33,6 +33,9 @@ enum Theme {
     // A light, vivid violet for the compacting state — distinct from the orange working accent and
     // reads cleanly on the pure-black pill.
     static let purple = Color(.sRGB, red: 0.71, green: 0.55, blue: 0.96, opacity: 1)
+    // A calm, cool gray for the "waiting on background agents" state — deliberately muted so it
+    // reads as pending/inactive (not finished-green, not working-orange, not attention-amber).
+    static let gray = Color(.sRGB, red: 0.60, green: 0.63, blue: 0.68, opacity: 1)
 
     // Pill geometry shared by the view and the window's interactive-zone math.
     static let wing: CGFloat = 56        // each side wing (glyph / timer) of the closed bar
@@ -70,6 +73,7 @@ enum Theme {
         case .permission, .error: return amber
         case .completed, .done:   return green
         case .compacting:         return purple
+        case .waiting:            return gray
         default:                  return accent(provider)
         }
     }

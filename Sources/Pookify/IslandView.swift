@@ -187,6 +187,9 @@ struct IslandPill: View {
             switch model.state {
             case .permission:
                 Circle().fill(Theme.amber).frame(width: 8, height: 8)
+            case .waiting:
+                // Parked on background agents — a calm gray dot (mirrors the amber permission dot).
+                Circle().fill(Theme.gray).frame(width: 8, height: 8)
             case .done, .completed:
                 // A finished session — a calm green check. "Done" reads green the whole time it's
                 // on screen (no orange just-finished flash), matching the green Done in the stack.
@@ -400,6 +403,7 @@ struct IslandPill: View {
         switch model.state {
         case .done, .completed:   return Theme.green
         case .permission, .error: return Theme.amber
+        case .waiting:            return Theme.gray
         default:                  return .white
         }
     }
@@ -411,6 +415,7 @@ struct IslandPill: View {
         case .completed:  return "Done"
         case .error:      return "Error"
         case .idle:       return "Idle"
+        case .waiting:    return model.label.isEmpty ? "Waiting for agents" : model.label
         default:          return model.label.isEmpty ? "Working…" : model.label
         }
     }
@@ -502,6 +507,7 @@ private struct SessionRow: View {
         switch session.state {
         case .done, .completed: return Theme.green
         case .permission:       return Theme.amber
+        case .waiting:          return Theme.gray
         default:                return .white.opacity(0.52)
         }
     }
@@ -527,6 +533,7 @@ private struct SessionRow: View {
         case .done:       return "Done"
         case .completed:  return "Done"
         case .error:      return "Error"
+        case .waiting:    return session.label.isEmpty ? "Waiting for agents" : session.label
         default:          return session.label.isEmpty ? "Working…" : session.label
         }
     }

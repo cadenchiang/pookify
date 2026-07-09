@@ -139,6 +139,11 @@ enum SessionAggregator {
                 return working(within: workBackstopCap) ? .thinking : quietFallback()
             }
             return working(within: workBackstopCap) ? .tool : quietFallback()
+        case .waiting:
+            // Parked on background agents. Keep it shown while there's still life (subagent tool
+            // activity keeps `ts`/the transcript fresh); if it goes fully quiet past the backstop,
+            // fall through to Done/idle like a working turn whose end hook was dropped.
+            return working(within: workBackstopCap) ? .waiting : quietFallback()
         case .permission:
             return (now - s.ts > permissionCap) ? .idle : .permission
         case .done:
