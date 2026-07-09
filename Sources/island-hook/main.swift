@@ -176,13 +176,16 @@ let carriedStart = prev?.startedAt ?? 0
 
 switch kind {
 case "session-start":
-    // Auto-compaction restarts the session mid-turn (SessionStart fires again with
-    // source:"compact"): keep the turn alive and its clock intact instead of resetting to idle,
-    // so the island doesn't blink and the timer doesn't restart in the middle of real work.
-    // (A manual /compact between turns was idle before compacting — prev says so — and resets.)
     if str("source") == "compact", let p = prev, p.tool == "compact-auto" {
+        // Auto-compaction restarts the session mid-turn (SessionStart fires again with
+        // source:"compact"): keep the turn alive and its clock intact instead of resetting to idle,
+        // so the island doesn't blink and the timer doesn't restart in the middle of real work.
         writeState(.thinking, label: "Thinking…",
                    startedAt: turnStart(), started: true)
+    } else if str("source") == "compact", let p = prev, p.tool == "compact-manual" {
+        // A manual /compact just finished: mark it Done — it flashes the green "Done" and then
+        // settles/recedes like any completed turn — so compaction reads as a finished action.
+        writeState(.done, label: "Done", startedAt: 0, started: true)
     } else {
         // Seed an idle marker so the session counts immediately. started:false keeps a
         // merely-opened session quiet until it does real work.
