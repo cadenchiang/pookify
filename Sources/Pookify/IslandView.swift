@@ -210,20 +210,38 @@ struct IslandPill: View {
     /// notch wing is narrow, so past `maxDots` sessions the dots cap (the count still reflects the
     /// true total) rather than overflow the bar. Dots follow the stack order (most urgent first).
     private var maxDots: Int { 5 }
+    private let dotSize: CGFloat = 5.5
     private var multiStatus: some View {
         HStack(spacing: 4) {
-            HStack(spacing: 2.5) {
-                ForEach(model.sessions.prefix(maxDots)) { s in
-                    Circle()
-                        .fill(Theme.stateDot(s.state, s.provider))
-                        .frame(width: 5.5, height: 5.5)
-                }
-            }
+            sessionDots
             Text("\(model.sessions.count)")
                 .font(.system(size: 11.5, weight: .semibold).monospacedDigit())
                 .foregroundStyle(.white.opacity(0.95))
         }
         .lineLimit(1)
+    }
+
+    /// The per-session status dots beside the collapsed count. With exactly three sessions they
+    /// rack into a triangle — like a cup-pong setup — so "three at once" reads instantly (apex is
+    /// the most urgent session). Two, or four and up, stay a single row (dots cap at `maxDots`,
+    /// where the count still tells the true total).
+    @ViewBuilder private var sessionDots: some View {
+        if model.sessions.count == 3 {
+            VStack(spacing: 2) {
+                dot(model.sessions[0])
+                HStack(spacing: 2.5) { dot(model.sessions[1]); dot(model.sessions[2]) }
+            }
+        } else {
+            HStack(spacing: 2.5) {
+                ForEach(model.sessions.prefix(maxDots)) { dot($0) }
+            }
+        }
+    }
+
+    private func dot(_ s: SessionInfo) -> some View {
+        Circle()
+            .fill(Theme.stateDot(s.state, s.provider))
+            .frame(width: dotSize, height: dotSize)
     }
 
     // MARK: drop-down (the taller part — words live here)
@@ -492,11 +510,36 @@ private struct SessionRow: View {
         .animation(.easeOut(duration: 0.15), value: hovering)
     }
 
+    /// A small ring that fills clockwise as the session's context window fills — the glance-cue for
+    /// when to /compact. Grey with headroom; it warms to amber as it approaches full so a nearly
+    /// spent window stands out without shouting. Hidden when unknown.
+    @ViewBuilder private var contextRing: some View {
+        if let f = session.context, f > 0 {
+            ZStack {
+                Circle().stroke(.white.opacity(0.14), lineWidth: 2)
+                Circle()
+                    .trim(from: 0, to: max(0.02, min(1, f)))
+                    .stroke(contextTint(f), style: StrokeStyle(lineWidth: 2, lineCap: .round))
+                    .rotationEffect(.degrees(-90))   // start the fill at 12 o'clock
+            }
+            .frame(width: 11, height: 11)
+            .allowsHitTesting(false)
+            .animation(.easeOut(duration: 0.35), value: f)
+        }
+    }
+
+    /// Grey with headroom; amber-tinted as the window fills (the /compact nudge).
+    private func contextTint(_ f: Double) -> Color {
+        if f >= 0.9  { return Theme.amber.opacity(0.85) }
+        if f >= 0.75 { return Theme.amber.opacity(0.55) }
+        return .white.opacity(0.28)
+    }
+
     private var dotColor: Color { Theme.stateDot(session.state, session.provider) }
 
     private var activityText: some View {
         Text(activityWord)
-            .font(.system(size: 10.5))
+            .font(.system(size: 8.5))
             .foregroundStyle(activityColor)
             .lineLimit(1)
             .truncationMode(.tail)
@@ -538,9 +581,17 @@ private struct SessionRow: View {
         }
     }
 
+    /// The context ring and the timer/status, inline on the same line.
+    private var trailing: some View {
+        HStack(spacing: 5) {
+            contextRing
+            trailingStatus
+        }
+    }
+
     /// Timer while the turn runs (it keeps counting through a permission wait, like the real turn
     /// clock); a check or warning for the transient end states.
-    @ViewBuilder private var trailing: some View {
+    @ViewBuilder private var trailingStatus: some View {
         if session.startedAt > 0 {
             TimerText(startedAt: session.startedAt)
                 .font(.system(size: 10.5, weight: .semibold).monospacedDigit())

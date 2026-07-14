@@ -12,6 +12,8 @@ struct SessionInfo: Identifiable, Equatable {
     var detail: String      // file basename while in a tool, else empty
     var project: String     // basename of the session's cwd
     var startedAt: Double   // turn clock start (0 = no active turn)
+    var context: Double?    // fraction of the context window in use (0…1), nil if unknown — the
+                            // subtle grey meter on each row; the cue for when to /compact
 }
 
 /// Turns the set of on-disk session files into a single decision about what the island should
@@ -184,12 +186,62 @@ enum SessionAggregator {
         try? fh.seek(toOffset: size > window ? size - window : 0)
         guard let data = try? fh.readToEnd(), !data.isEmpty else { return nil }
         let text = String(decoding: data, as: UTF8.self)
-        // Newest line last; scan backward for the first interruption entry.
+        // One pass: the newest interruption marker, and the newest timestamp of ANY line. Claude
+        // Code stamps ISO-8601 UTC timestamps, which sort chronologically as plain strings, so a
+        // string compare is a time compare (no date parsing on the hot path).
+        var interruptTS: String? = nil
+        var newestTS: String? = nil
+        for line in text.split(separator: "\n", omittingEmptySubsequences: true) {
+            guard let ts = timestampString(line) else { continue }
+            if newestTS == nil || ts > newestTS! { newestTS = ts }
+            if isInterruptLine(line), interruptTS == nil || ts > interruptTS! { interruptTS = ts }
+        }
+        guard let its = interruptTS else { return nil }
+        // The turn RECOVERED if any line was written strictly after the interrupt marker — e.g.
+        // you typed a follow-up mid-turn (a queued message) and the model kept working, or a new
+        // prompt began. The stale marker then no longer describes the live turn, so it must NOT
+        // kill the session (the bug where a still-running session dropped out of the count). A
+        // genuine Ctrl+C leaves the marker as the last timestamped line, so it's still caught.
+        if let nts = newestTS, nts > its { return nil }
+        return (isoFrac.date(from: its) ?? iso.date(from: its))?.timeIntervalSince1970 ?? 0
+    }
+
+    /// The `"timestamp":"…"` value of one transcript line, without parsing the whole JSON. Nil for
+    /// lines that carry none (e.g. the trailing summary entries Claude writes after a turn).
+    private static func timestampString<S: StringProtocol>(_ line: S) -> String? {
+        guard let r = line.range(of: "\"timestamp\":\"") else { return nil }
+        let rest = line[r.upperBound...]
+        guard let end = rest.firstIndex(of: "\"") else { return nil }
+        return String(rest[..<end])
+    }
+
+    /// Fraction of the context window the session's latest turn occupies (0…1), or nil when it
+    /// can't be told. Read from the newest assistant message's token usage in the transcript, so it
+    /// tracks the same "how full is the context" number the CLI shows — the cue for when to
+    /// /compact. Computed only for sessions the UI actually renders (see `evaluate`).
+    static func contextFraction(_ s: SessionSnapshot) -> Double? {
+        guard !s.transcript.isEmpty,
+              let fh = FileHandle(forReadingAtPath: s.transcript) else { return nil }
+        defer { try? fh.close() }
+        guard let size = try? fh.seekToEnd(), size > 0 else { return nil }
+        let window: UInt64 = 262_144   // 256 KB tail — comfortably spans the final assistant record
+        try? fh.seek(toOffset: size > window ? size - window : 0)
+        guard let data = try? fh.readToEnd(), !data.isEmpty else { return nil }
+        let text = String(decoding: data, as: UTF8.self)
+        // Newest line last: scan backward for the most recent assistant message carrying usage.
         for line in text.split(separator: "\n", omittingEmptySubsequences: true).reversed() {
-            guard isInterruptLine(line) else { continue }
+            guard line.contains("\"usage\"") else { continue }
             guard let obj = try? JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: Any],
-                  let ts = obj["timestamp"] as? String else { continue }
-            return (isoFrac.date(from: ts) ?? iso.date(from: ts))?.timeIntervalSince1970 ?? 0
+                  let msg = obj["message"] as? [String: Any],
+                  let usage = msg["usage"] as? [String: Any] else { continue }
+            func n(_ k: String) -> Double { (usage[k] as? NSNumber)?.doubleValue ?? 0 }
+            let tokens = n("input_tokens") + n("cache_read_input_tokens")
+                       + n("cache_creation_input_tokens") + n("output_tokens")
+            guard tokens > 0 else { return nil }
+            // Context window: the [1m] beta carries 1M, standard is 200K. Some CLI builds omit the
+            // model from the hook payload, so infer 1M once usage exceeds what 200K could hold.
+            let limit: Double = s.model.contains("[1m]") || tokens > 190_000 ? 1_000_000 : 200_000
+            return min(1, tokens / limit)
         }
         return nil
     }
@@ -288,7 +340,10 @@ enum SessionAggregator {
                 // The file subtitle only makes sense while actually in a tool (not once it lingers out).
                 detail: eff == .tool ? s.detail : "",
                 project: s.project,
-                startedAt: s.startedAt
+                startedAt: s.startedAt,
+                // Rounded to whole percent so a poll whose usage didn't meaningfully move doesn't
+                // churn the model (SwiftUI diffs `sessions` by value) or jitter the bar.
+                context: contextFraction(s).map { (($0 * 100).rounded() / 100) }
             )
         }.sorted { a, b in
             if a.state.priority != b.state.priority { return a.state.priority > b.state.priority }
