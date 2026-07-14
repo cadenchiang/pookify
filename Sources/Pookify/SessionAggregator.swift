@@ -14,6 +14,7 @@ struct SessionInfo: Identifiable, Equatable {
     var startedAt: Double   // turn clock start (0 = no active turn)
     var context: Double?    // fraction of the context window in use (0…1), nil if unknown — the
                             // subtle grey meter on each row; the cue for when to /compact
+    var tty: String         // the session's terminal (e.g. "ttys003"), for writing the live title
 }
 
 /// Turns the set of on-disk session files into a single decision about what the island should
@@ -343,7 +344,8 @@ enum SessionAggregator {
                 startedAt: s.startedAt,
                 // Rounded to whole percent so a poll whose usage didn't meaningfully move doesn't
                 // churn the model (SwiftUI diffs `sessions` by value) or jitter the bar.
-                context: contextFraction(s).map { (($0 * 100).rounded() / 100) }
+                context: contextFraction(s).map { (($0 * 100).rounded() / 100) },
+                tty: s.tty
             )
         }.sorted { a, b in
             if a.state.priority != b.state.priority { return a.state.priority > b.state.priority }

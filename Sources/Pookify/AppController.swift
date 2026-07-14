@@ -2,6 +2,72 @@ import AppKit
 import SwiftUI
 import IslandCore
 
+/// Writes a live, one-line status into each session's terminal *title* (Terminal.app title text
+/// can't be colored, so state is shown by a leading glyph — a spinner while working, ✓ done, etc. —
+/// not by hue). Claude Code's own title management is turned off via
+/// `CLAUDE_CODE_DISABLE_TERMINAL_TITLE=1` so this owns the title uncontested. Best-effort: writing
+/// to a closed terminal just fails silently. Instantiated once at file scope and called only from
+/// the serialized poll, so its `last` cache needs no locking.
+final class TitleEmitter {
+    private var last: [String: String] = [:]   // sessionId → last title written (skip redundant writes)
+    private static let spinner = Array("⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏")
+
+    func emit(_ sessions: [SessionInfo]) {
+        let frame = TitleEmitter.spinner[Int(Date().timeIntervalSince1970 * 8) % TitleEmitter.spinner.count]
+        var live = Set<String>()
+        for s in sessions where s.tty.hasPrefix("ttys") {
+            live.insert(s.id)
+            let title = compose(s, frame: frame)
+            if last[s.id] == title { continue }   // unchanged (idle/done) → don't spam the tty
+            last[s.id] = title
+            write(title, tty: s.tty)
+        }
+        for id in last.keys where !live.contains(id) { last[id] = nil }
+    }
+
+    private func compose(_ s: SessionInfo, frame: Character) -> String {
+        let sym: String
+        switch s.state {
+        case .thinking, .tool, .compacting: sym = String(frame)
+        case .done, .completed:             sym = "✓"
+        case .permission:                   sym = "⏸"
+        case .error:                        sym = "✕"
+        case .waiting:                      sym = "◌"
+        case .idle:                         sym = "•"
+        }
+        let project = s.project.isEmpty ? "session" : s.project
+        var label = s.label
+        if label.isEmpty {
+            switch s.state {
+            case .done, .completed: label = "Done"
+            case .permission:       label = "Awaiting permission"
+            case .error:            label = "Error"
+            case .waiting:          label = "Waiting for agents"
+            case .idle:             label = "Idle"
+            default:                label = "Working…"
+            }
+        }
+        var title = "\(sym)  \(project) — \(label)"
+        if let c = s.context {
+            let w = 8, filled = max(0, min(w, Int((c * Double(w)).rounded())))
+            let meter = String(repeating: "█", count: filled) + String(repeating: "░", count: w - filled)
+            title += " — \(meter) \(Int((c * 100).rounded()))%"
+        }
+        return title
+    }
+
+    private func write(_ title: String, tty: String) {
+        guard let fh = FileHandle(forWritingAtPath: "/dev/\(tty)") else { return }
+        defer { try? fh.close() }
+        // OSC 2 sets the window title; it's invisible in the buffer, so it never disturbs output
+        // even while Claude Code holds the alternate screen.
+        if let d = "\u{1B}]2;\(title)\u{07}".data(using: .utf8) { try? fh.write(contentsOf: d) }
+    }
+}
+
+/// Single shared emitter (non-isolated so the background poll can call it directly).
+let titleEmitter = TitleEmitter()
+
 /// Ties everything together: polls the session files, drives the island model, shows the menu,
 /// and self-quits when nothing is running so there's no idle process to manage.
 @MainActor
@@ -86,6 +152,9 @@ final class AppController: NSObject, NSApplicationDelegate {
             // Directory listing + JSON decode + reaping happen off the main thread so the UI
             // (and the menu-bar passthrough) never stalls on disk.
             let decision = SessionAggregator.evaluate()
+            // Push each session's live status into its terminal title (off-main file I/O; the poll
+            // is serialized by `pollInFlight` so the emitter's cache needs no locking).
+            titleEmitter.emit(decision.sessions)
             DispatchQueue.main.async {
                 MainActor.assumeIsolated {
                     guard let self else { return }
