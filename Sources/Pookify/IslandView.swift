@@ -528,10 +528,12 @@ private struct SessionRow: View {
         }
     }
 
-    /// Grey with headroom; amber-tinted as the window fills (the /compact nudge).
+    /// Thresholds from the context-rot research: comfortable below ~50%, the proactive-compact
+    /// sweet spot 50–75% (amber), and red at ≥75% where Claude Code auto-compacts and quality has
+    /// already degraded — i.e. compact now.
     private func contextTint(_ f: Double) -> Color {
-        if f >= 0.9  { return Theme.amber.opacity(0.85) }
-        if f >= 0.75 { return Theme.amber.opacity(0.55) }
+        if f >= 0.75 { return Theme.red }
+        if f >= 0.5  { return Theme.amber.opacity(0.8) }
         return .white.opacity(0.28)
     }
 
@@ -581,10 +583,15 @@ private struct SessionRow: View {
         }
     }
 
-    /// The context ring and the timer/status, inline on the same line.
+    /// The ring and the timer/status, inline on the same line. While compacting the ring shows
+    /// estimated compaction progress; otherwise it shows how full the context window is.
     private var trailing: some View {
         HStack(spacing: 5) {
-            contextRing
+            if session.state == .compacting {
+                CompactionSpinner()
+            } else {
+                contextRing
+            }
             trailingStatus
         }
     }
@@ -659,6 +666,28 @@ struct WorkingLabel: View {
                 .init(color: dim,    location: 1),
             ],
             startPoint: .leading, endPoint: .trailing)
+    }
+}
+
+/// An indeterminate spinner shown while a session is compacting. Claude Code exposes no real
+/// compaction progress to external observers (only start/finish events land — the transcript's
+/// `compact_boundary` entry is written once, at the end), so this makes NO claim about how far
+/// along it is: a purple arc simply rotates to show compaction is underway, then vanishes when the
+/// session leaves `.compacting`. Purple to match the compacting state.
+struct CompactionSpinner: View {
+    var body: some View {
+        TimelineView(.animation(minimumInterval: 1.0 / 30.0)) { context in
+            let t = context.date.timeIntervalSinceReferenceDate
+            let angle = (t * 300).truncatingRemainder(dividingBy: 360)   // ~0.83 rev/sec
+            ZStack {
+                Circle().stroke(Theme.purple.opacity(0.22), lineWidth: 2)
+                Circle()
+                    .trim(from: 0, to: 0.28)
+                    .stroke(Theme.purple, style: StrokeStyle(lineWidth: 2, lineCap: .round))
+                    .rotationEffect(.degrees(angle))
+            }
+            .frame(width: 11, height: 11)
+        }
     }
 }
 

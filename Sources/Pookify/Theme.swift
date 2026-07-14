@@ -27,6 +27,9 @@ enum Theme {
     }()
 
     static let amber = Color(.sRGB, red: 0.96, green: 0.74, blue: 0.18, opacity: 1)
+    // A warm red for a nearly-spent context window (auto-compact imminent, quality already
+    // degrading) — the ring's "compact now" signal.
+    static let red = Color(.sRGB, red: 0.93, green: 0.42, blue: 0.38, opacity: 1)
     // A calm green for finished ("completed") sessions — distinct from the working accent (orange)
     // and the attention amber, so a resting done session reads as done at a glance.
     static let green = Color(.sRGB, red: 0.36, green: 0.80, blue: 0.50, opacity: 1)
