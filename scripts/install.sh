@@ -27,6 +27,18 @@ cp -R "$APP_SRC" "$APP_DST"
 echo "▸ Wiring hooks into Claude Code…"
 "$APP_DST/Contents/MacOS/Pookify" --install || true
 
+# Deploy the status line mirror. It's the *writer* half of the context ring: it hands Claude
+# Code's authoritative context_window.used_percentage to the notch via a per-session sidecar
+# (state.d/ctx-<sessionId>.json), which the ring prefers over its token heuristic. Keeping it
+# tracked + deployed here means `git pull && install.sh` restores both halves in lockstep.
+STATUSLINE_DST="$HOME/.claude/pookify-statusline.py"
+echo "▸ Installing the status line ($STATUSLINE_DST)…"
+mkdir -p "$HOME/.claude"
+cp statusline/pookify-statusline.py "$STATUSLINE_DST"
+chmod +x "$STATUSLINE_DST"
+echo "  Note: this does NOT edit settings.json. If the status line isn't showing, wire it once:"
+echo '        "statusLine": { "type": "command", "command": "/usr/bin/python3 '"$STATUSLINE_DST"'" }'
+
 echo "▸ Launching…"
 open "$APP_DST"
 
