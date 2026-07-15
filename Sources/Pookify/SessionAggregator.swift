@@ -220,6 +220,20 @@ enum SessionAggregator {
     /// tracks the same "how full is the context" number the CLI shows — the cue for when to
     /// /compact. Computed only for sessions the UI actually renders (see `evaluate`).
     static func contextFraction(_ s: SessionSnapshot) -> Double? {
+        // Prefer Claude Code's own context_window.used_percentage, which the statusline mirrors into
+        // a per-session sidecar (ctx-<sessionId>.json). CC never exposes the [1m] 1M window to
+        // observers — the hook payload's model is empty and the transcript records `claude-opus-4-8`
+        // with no suffix — so the token heuristic below cannot tell a 1M session under 190k tokens
+        // (low usage) from a full 200k one and false-reds it. This value is authoritative.
+        if !s.sessionId.isEmpty {
+            let ctx = Island.stateDir.appendingPathComponent("ctx-\(s.sessionId).json")
+            if let data = try? Data(contentsOf: ctx),
+               let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+               let pct = (obj["pct"] as? NSNumber)?.doubleValue {
+                return min(1, max(0, pct / 100))
+            }
+        }
+        // Fallback (older CC builds / statusline disabled): derive from the transcript tail.
         guard !s.transcript.isEmpty,
               let fh = FileHandle(forReadingAtPath: s.transcript) else { return nil }
         defer { try? fh.close() }
